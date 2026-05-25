@@ -10,6 +10,8 @@ Serve the folder with any static file server and open `index.html`.
 python -m http.server 8080 --bind 127.0.0.1
 ```
 
+On Windows, double-click `launch-3d-auralisator.bat` to start the local server and open the app.
+
 The main app now uses the Babylon renderer migration shell. The old Three.js single-file app is preserved as `legacy-three.html`.
 
 ## Development
