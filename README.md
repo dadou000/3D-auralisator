@@ -1,6 +1,6 @@
 # GPU Binaural 3D Auralisator
 
-Static GitHub Pages build for the 3D binaural auralisator demo.
+This simple software lets you build speakers and listen to them in a 3D space.
 
 ## Run locally
 
