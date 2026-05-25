@@ -4,6 +4,7 @@ import { BabylonAuralisatorRenderer } from './renderers/babylon/babylon-renderer
 
 const appScene = createDefaultAuralisatorScene();
 const summary = summarizeScene(appScene);
+initSideTabs();
 
 const renderer = new BabylonAuralisatorRenderer({
   canvas: document.getElementById('renderCanvas'),
@@ -73,3 +74,19 @@ renderer.init(appScene).catch(error => {
   console.error(error);
   document.getElementById('statusText').textContent = `Renderer failed: ${error.message}`;
 });
+
+function initSideTabs() {
+  const buttons = [...document.querySelectorAll('[data-tab-target]')];
+  const panels = [...document.querySelectorAll('[data-tab-panel]')];
+  for (const button of buttons) {
+    button.addEventListener('click', () => {
+      const target = button.dataset.tabTarget;
+      for (const item of buttons) {
+        item.setAttribute('aria-pressed', String(item === button));
+      }
+      for (const panel of panels) {
+        panel.hidden = panel.dataset.tabPanel !== target;
+      }
+    });
+  }
+}

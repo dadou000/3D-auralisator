@@ -1,3 +1,5 @@
+import { flattenHardwareConnections } from '../hardware/hardware-model.js';
+
 export class AuralisatorAudioEngine {
   constructor({ appScene, controls = {}, statusEl } = {}) {
     this.appScene = appScene;
@@ -141,24 +143,24 @@ export class AuralisatorAudioEngine {
         if (!speaker || !dspRoute) {
           continue;
         }
-      const gain = this.ctx.createGain();
-      const panner = this.ctx.createPanner();
-      panner.panningModel = 'HRTF';
-      panner.distanceModel = 'inverse';
-      panner.refDistance = 1;
-      panner.maxDistance = 60;
-      panner.rolloffFactor = 0.8;
-      panner.coneInnerAngle = 90;
-      panner.coneOuterAngle = 220;
-      panner.coneOuterGain = 0.28;
-      setAudioParam(panner.positionX, speaker.position[0]);
-      setAudioParam(panner.positionY, speaker.position[1]);
-      setAudioParam(panner.positionZ, speaker.position[2]);
+        const gain = this.ctx.createGain();
+        const panner = this.ctx.createPanner();
+        panner.panningModel = 'HRTF';
+        panner.distanceModel = 'inverse';
+        panner.refDistance = 1;
+        panner.maxDistance = 60;
+        panner.rolloffFactor = 0.8;
+        panner.coneInnerAngle = 90;
+        panner.coneOuterAngle = 220;
+        panner.coneOuterGain = 0.28;
+        setAudioParam(panner.positionX, speaker.position[0]);
+        setAudioParam(panner.positionY, speaker.position[1]);
+        setAudioParam(panner.positionZ, speaker.position[2]);
 
         gain.gain.value = ampChannel.muted ? 0 : ampChannel.gain;
         dspRoute.outputGain.connect(gain);
-      gain.connect(panner);
-      panner.connect(this.master);
+        gain.connect(panner);
+        panner.connect(this.master);
         this.speakerRoutes.set(speaker.id, { speaker, amp, ampChannel, gain, panner });
       }
     }
@@ -411,29 +413,56 @@ export class AuralisatorAudioEngine {
     }
     const graph = this.appScene.hardware;
     this.controls.hardwareGraph.replaceChildren();
-    const rows = [
-      ['Mix Out L', 'DSP In L', 'DSP Out L', 'Amp A CH1', 'Left Speaker'],
-      ['Mix Out R', 'DSP In R', 'DSP Out R', 'Amp A CH2', 'Right Speaker']
-    ];
-    for (const row of rows) {
-      const line = document.createElement('div');
-      line.className = 'hardware-row';
-      for (const [index, name] of row.entries()) {
-        const node = document.createElement('span');
-        node.className = 'hardware-node';
-        node.textContent = name;
-        line.append(node);
-        if (index < row.length - 1) {
-          const wire = document.createElement('span');
-          wire.className = 'hardware-wire';
-          wire.textContent = '>';
-          line.append(wire);
-        }
-      }
-      this.controls.hardwareGraph.append(line);
+    const canvas = document.createElement('div');
+    canvas.className = 'node-canvas';
+
+    canvas.append(createNodeColumn('Mix outputs', graph.mixOutputs.map(output => ({
+      id: output.id,
+      title: output.name,
+      meta: `${output.channel} bus`,
+      ports: [{ label: output.id, kind: 'out' }]
+    }))));
+
+    canvas.append(createNodeColumn('DSP', [{
+      id: graph.dsp.id,
+      title: graph.dsp.name,
+      meta: 'Sigma-style processing',
+      ports: [
+        ...graph.dsp.inputs.map(input => ({ label: input.id, kind: 'in' })),
+        ...graph.dsp.outputs.map(output => ({ label: output.id, kind: 'out' }))
+      ],
+      blocks: ['Input Gain', 'HPF', 'PEQ', 'LPF', 'Delay', 'Output Gain']
+    }]));
+
+    canvas.append(createNodeColumn('Amplifiers', graph.amps.flatMap(amp => amp.channels.map(channel => ({
+      id: channel.id,
+      title: channel.name,
+      meta: amp.name,
+      ports: [
+        { label: channel.input, kind: 'in' },
+        { label: channel.speakerId ?? 'unassigned', kind: 'out' }
+      ]
+    })))));
+
+    canvas.append(createNodeColumn('Speakers', this.appScene.speakers.map(speaker => ({
+      id: speaker.id,
+      title: speaker.name,
+      meta: speaker.id,
+      ports: [{ label: speaker.id, kind: 'in' }]
+    }))));
+
+    const connectionList = document.createElement('div');
+    connectionList.className = 'connection-list';
+    for (const connection of flattenHardwareConnections(graph)) {
+      const item = document.createElement('div');
+      item.className = `connection-item ${connection.type}`;
+      item.textContent = `${connection.from} -> ${connection.to}`;
+      connectionList.append(item);
     }
+
+    this.controls.hardwareGraph.append(canvas, connectionList);
     if (this.controls.dspSummary) {
-      this.controls.dspSummary.textContent = `${graph.dsp.name}: ${graph.mixOutputs.length} inputs, ${graph.dsp.outputs.length} outputs, ${graph.amps.length} amp`;
+      this.controls.dspSummary.textContent = `${graph.dsp.name}: ${graph.mixOutputs.length} mix outs, ${graph.dsp.outputs.length} DSP outs, ${graph.amps.length} amp`;
     }
   }
 
@@ -495,4 +524,53 @@ function findAmpChannelForSpeaker(graph, speakerId) {
     }
   }
   return null;
+}
+
+function createNodeColumn(title, nodes) {
+  const column = document.createElement('section');
+  column.className = 'node-column';
+  const heading = document.createElement('h4');
+  heading.textContent = title;
+  column.append(heading);
+  for (const node of nodes) {
+    column.append(createNodeCard(node));
+  }
+  return column;
+}
+
+function createNodeCard(node) {
+  const card = document.createElement('article');
+  card.className = 'node-card';
+  card.dataset.nodeId = node.id;
+
+  const header = document.createElement('div');
+  header.className = 'node-card-header';
+  const title = document.createElement('strong');
+  title.textContent = node.title;
+  const meta = document.createElement('span');
+  meta.textContent = node.meta;
+  header.append(title, meta);
+  card.append(header);
+
+  if (node.blocks?.length) {
+    const blocks = document.createElement('div');
+    blocks.className = 'node-block-stack';
+    for (const block of node.blocks) {
+      const item = document.createElement('span');
+      item.textContent = block;
+      blocks.append(item);
+    }
+    card.append(blocks);
+  }
+
+  const ports = document.createElement('div');
+  ports.className = 'node-ports';
+  for (const port of node.ports) {
+    const item = document.createElement('span');
+    item.className = `node-port ${port.kind}`;
+    item.textContent = port.label;
+    ports.append(item);
+  }
+  card.append(ports);
+  return card;
 }

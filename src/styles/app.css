@@ -111,7 +111,7 @@ button[aria-pressed="true"] {
 .side-panel {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 14px;
   min-width: 0;
   padding: 18px;
   background: #11171a;
@@ -123,6 +123,31 @@ button[aria-pressed="true"] {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+.side-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  position: sticky;
+  top: -18px;
+  z-index: 2;
+  padding: 8px 0;
+  background: #11171a;
+}
+
+.side-tabs button {
+  min-height: 32px;
+  padding: 0 6px;
+  font-size: 12px;
+}
+
+.side-tabs button[aria-pressed="true"] {
+  background: rgba(29, 70, 82, 0.95);
+}
+
+.tab-panel[hidden] {
+  display: none;
 }
 
 .panel-section h2,
@@ -274,33 +299,102 @@ input:disabled {
   color: #d6e8ec;
 }
 
-.hardware-graph {
+.node-editor {
   display: grid;
-  gap: 8px;
+  gap: 10px;
   overflow-x: auto;
 }
 
-.hardware-row {
-  display: flex;
-  align-items: center;
-  gap: 7px;
+.node-canvas {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(150px, 1fr));
+  gap: 10px;
   min-width: max-content;
+  padding-bottom: 4px;
 }
 
-.hardware-node {
-  min-width: 82px;
-  padding: 8px 9px;
-  border: 1px solid rgba(81, 210, 242, 0.28);
-  border-radius: 7px;
+.node-column {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+}
+
+.node-column h4 {
+  margin: 0;
+  color: #8eb4bd;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.node-card {
+  display: grid;
+  gap: 8px;
+  min-width: 150px;
+  padding: 9px;
+  border: 1px solid rgba(81, 210, 242, 0.24);
+  border-radius: 8px;
   background: #152128;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.025);
+}
+
+.node-card-header {
+  display: grid;
+  gap: 2px;
+}
+
+.node-card-header strong {
   color: #e4f8ff;
-  text-align: center;
   font-size: 12px;
 }
 
-.hardware-wire {
+.node-card-header span {
+  color: #91aab1;
+  font-size: 11px;
+}
+
+.node-block-stack,
+.node-ports,
+.connection-list {
+  display: grid;
+  gap: 5px;
+}
+
+.node-block-stack span,
+.node-port,
+.connection-item {
+  padding: 5px 7px;
+  border-radius: 6px;
+  background: #0d1519;
+  font-size: 12px;
+}
+
+.node-port {
+  position: relative;
+  color: #d6e8ec;
+}
+
+.node-port::before {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: #51d2f2;
+}
+
+.node-port.in::before {
+  background: #f4b24d;
+}
+
+.connection-list {
+  grid-template-columns: 1fr;
+}
+
+.connection-item {
   color: #83d9ef;
-  font-size: 13px;
+  border: 1px solid rgba(81, 210, 242, 0.12);
 }
 
 .dsp-grid {

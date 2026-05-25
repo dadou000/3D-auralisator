@@ -32,7 +32,14 @@
         <div id="sceneStats" class="status">Loading scene...</div>
       </section>
 
-      <section class="panel-section">
+      <nav class="side-tabs" aria-label="Workspace tabs">
+        <button type="button" data-tab-target="audio" aria-pressed="true">Audio</button>
+        <button type="button" data-tab-target="routing" aria-pressed="false">Routing</button>
+        <button type="button" data-tab-target="probes" aria-pressed="false">Probes</button>
+        <button type="button" data-tab-target="runtime" aria-pressed="false">Runtime</button>
+      </nav>
+
+      <section class="panel-section tab-panel" data-tab-panel="audio">
         <h3>Audio Inputs</h3>
         <button id="audioStartBtn" type="button">Start audio</button>
         <label class="field">
@@ -79,9 +86,9 @@
         <div id="audioStatus" class="status">Audio engine idle.</div>
       </section>
 
-      <section class="panel-section">
-        <h3>DSP / Hardware</h3>
-        <div id="hardwareGraph" class="hardware-graph"></div>
+      <section class="panel-section tab-panel" data-tab-panel="routing" hidden>
+        <h3>Routing</h3>
+        <div id="hardwareGraph" class="node-editor"></div>
         <div id="dspSummary" class="status">DSP graph loading...</div>
         <div class="dsp-grid">
           <div class="dsp-block">
@@ -148,7 +155,7 @@
         </div>
       </section>
 
-      <section class="panel-section">
+      <section class="panel-section tab-panel" data-tab-panel="probes" hidden>
         <h3>Probe Editor</h3>
         <label class="field">
           Grid mode
@@ -192,7 +199,7 @@
         <div id="probeStats" class="status">Probe field loading...</div>
       </section>
 
-      <section class="panel-section">
+      <section class="panel-section tab-panel" data-tab-panel="runtime" hidden>
         <h3>Runtime Target</h3>
         <div class="pipeline">
           <div>Load acoustic chunks <span>planned</span></div>
@@ -202,7 +209,7 @@
         </div>
       </section>
 
-      <section class="panel-section">
+      <section class="panel-section tab-panel" data-tab-panel="runtime" hidden>
         <h3>Visualization</h3>
         <div class="metric-grid">
           <div class="metric">
