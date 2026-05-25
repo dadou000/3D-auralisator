@@ -216,6 +216,35 @@ button[aria-pressed="true"] {
   line-height: 1.45;
 }
 
+.solver-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.solver-stat {
+  min-width: 0;
+  padding: 8px 9px;
+  border: 1px solid #26383d;
+  border-radius: 8px;
+  background: #11191c;
+}
+
+.solver-stat span {
+  display: block;
+  color: #86a5ad;
+  font-size: 11px;
+}
+
+.solver-stat strong {
+  display: block;
+  margin-top: 3px;
+  color: #e3f5f7;
+  font-size: 15px;
+  font-weight: 700;
+}
+
 .pipeline {
   display: grid;
   gap: 8px;

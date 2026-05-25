@@ -596,15 +596,31 @@ export class BabylonAuralisatorRenderer {
   runPreviewSolver() {
     this.solverResult = solvePreviewAcousticField(this.appScene, this.previewBake?.probes ?? []);
     if (this.solverControls.stats) {
-      this.solverControls.stats.textContent = [
-        `${this.solverResult.responses.length} responses`,
-        `${this.solverResult.occluded} occluded`,
-        `${this.solverResult.stats.earlyEventCount} early events`,
-        `${this.solverResult.stats.lowFrequencyBinCount} LF bins`,
-        `avg gain ${this.solverResult.averageGain.toFixed(3)}`
-      ].join(' / ');
+      this.renderSolverStats(this.solverResult);
     }
     this.setStatus('Preview baked-field solver completed.');
+  }
+
+  renderSolverStats(result) {
+    const items = [
+      ['Responses', result.responses.length],
+      ['Occluded', result.occluded],
+      ['Early events', result.stats.earlyEventCount],
+      ['LF bins', result.stats.lowFrequencyBinCount],
+      ['Avg gain', result.averageGain.toFixed(3)]
+    ];
+    this.solverControls.stats.replaceChildren(
+      ...items.map(([label, value]) => {
+        const item = document.createElement('div');
+        item.className = 'solver-stat';
+        const labelEl = document.createElement('span');
+        labelEl.textContent = label;
+        const valueEl = document.createElement('strong');
+        valueEl.textContent = String(value);
+        item.append(labelEl, valueEl);
+        return item;
+      })
+    );
   }
 
   selectProbe(mesh) {
