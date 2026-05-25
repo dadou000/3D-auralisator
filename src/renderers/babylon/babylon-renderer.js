@@ -5,6 +5,7 @@ import {
   relinkProbeNeighbors
 } from '../../acoustic/bake/preview-bake.js';
 import { ProbeFieldSampler } from '../../acoustic/runtime/probe-field.js';
+import { solvePreviewAcousticField } from '../../acoustic/solver/preview-solver.js';
 
 const MATERIAL_COLORS = Object.freeze({
   concrete: [0.55, 0.58, 0.62],
@@ -23,6 +24,9 @@ export class BabylonAuralisatorRenderer {
     probeButton,
     legacyLink,
     onListenerChange = () => {},
+    onSceneObjectChange = () => {},
+    objectControls = {},
+    solverControls = {},
     probeControls = {}
   } = {}) {
     this.canvas = canvas;
@@ -33,6 +37,9 @@ export class BabylonAuralisatorRenderer {
     this.probeButton = probeButton;
     this.legacyLink = legacyLink;
     this.onListenerChange = onListenerChange;
+    this.onSceneObjectChange = onSceneObjectChange;
+    this.objectControls = objectControls;
+    this.solverControls = solverControls;
     this.probeControls = probeControls;
     this.engine = null;
     this.scene = null;
@@ -45,6 +52,11 @@ export class BabylonAuralisatorRenderer {
     this.selectedProbe = null;
     this.manualProbeCounter = 1;
     this.gizmoManager = null;
+    this.objectGizmoManager = null;
+    this.importedObjects = [];
+    this.selectedObject = null;
+    this.importCounter = 1;
+    this.solverResult = null;
     this.listenerNode = null;
     this.fpv = {
       enabled: false,
@@ -75,7 +87,9 @@ export class BabylonAuralisatorRenderer {
     this.createSceneObjects(appScene);
     this.createPreviewProbeField(appScene);
     this.createProbeGizmo();
+    this.createObjectGizmo();
     this.bindControls();
+    this.updateObjectControls();
 
     this.engine.runRenderLoop(() => {
       this.updateFpv(this.engine.getDeltaTime() / 1000);
@@ -193,7 +207,8 @@ export class BabylonAuralisatorRenderer {
     mesh.position = BABYLON.Vector3.FromArray(wall.position);
     mesh.rotation = BABYLON.Vector3.FromArray(wall.rotation);
     mesh.material = this.materials[wall.material] ?? this.materials.concrete;
-    mesh.metadata = { type: 'wall', source: wall };
+    wall._mesh = mesh;
+    mesh.metadata = { type: 'sceneObject', objectType: 'wall', source: wall, node: mesh, movable: true };
     return mesh;
   }
 
@@ -223,7 +238,9 @@ export class BabylonAuralisatorRenderer {
     const label = makeLabel(this.scene, speaker.name, new BABYLON.Vector3(0, 0.72, 0), root);
     label.color = '#dff6ff';
 
-    root.metadata = { type: 'speaker', source: speaker };
+    root.metadata = { type: 'sceneObject', objectType: 'speaker', source: speaker, node: root, movable: true };
+    body.metadata = root.metadata;
+    cone.metadata = root.metadata;
     return root;
   }
 
@@ -248,6 +265,9 @@ export class BabylonAuralisatorRenderer {
 
     makeLabel(this.scene, 'Listener', new BABYLON.Vector3(0, 0.45, 0), root);
     this.listenerNode = root;
+    root.metadata = { type: 'sceneObject', objectType: 'listener', source: listener, node: root, movable: true };
+    head.metadata = root.metadata;
+    nose.metadata = root.metadata;
     return root;
   }
 
@@ -336,6 +356,24 @@ export class BabylonAuralisatorRenderer {
     }
   }
 
+  createObjectGizmo() {
+    this.objectGizmoManager = new BABYLON.GizmoManager(this.scene);
+    this.objectGizmoManager.positionGizmoEnabled = true;
+    this.objectGizmoManager.rotationGizmoEnabled = false;
+    this.objectGizmoManager.scaleGizmoEnabled = false;
+    this.objectGizmoManager.usePointerToAttachGizmos = false;
+    this.objectGizmoManager.attachToNode?.(null);
+    this.objectGizmoManager.attachToMesh?.(null);
+
+    const positionGizmo = this.objectGizmoManager.gizmos.positionGizmo;
+    positionGizmo?.onDragObservable?.add(() => this.syncSelectedObjectFromNode());
+    positionGizmo?.onDragEndObservable?.add(() => {
+      this.syncSelectedObjectFromNode();
+      this.onSceneObjectChange();
+      this.updateObjectControls();
+    });
+  }
+
   rebuildSampler() {
     relinkProbeNeighbors(this.previewBake.probes, this.appScene.acoustic.previewProbeSpacing * 1.1);
     const probeIds = this.previewBake.probes.map(probe => probe.id);
@@ -396,6 +434,175 @@ export class BabylonAuralisatorRenderer {
     this.rebuildSampler();
     this.updateProbeControls();
     this.setStatus(`Deleted ${probe.id}.`);
+  }
+
+  async importGeometryFiles(files) {
+    const list = [...(files ?? [])];
+    if (!list.length) {
+      return;
+    }
+    const supported = list.filter(file => /\.(glb|gltf)$/i.test(file.name));
+    const fbxFiles = list.filter(file => /\.fbx$/i.test(file.name));
+    if (fbxFiles.length && this.objectControls.importStatus) {
+      this.objectControls.importStatus.textContent = 'FBX is not imported directly in the browser. Use the Blender exporter to convert FBX/Blender scenes to GLB.';
+    }
+    if (!supported.length) {
+      return;
+    }
+
+    if (BABYLON.FilesInput?.FilesToLoad) {
+      for (const file of list) {
+        BABYLON.FilesInput.FilesToLoad[file.name.toLowerCase()] = file;
+      }
+    }
+
+    for (const file of supported) {
+      try {
+        const extension = file.name.toLowerCase().endsWith('.glb') ? '.glb' : '.gltf';
+        const result = await BABYLON.SceneLoader.ImportMeshAsync(null, 'file:', file.name, this.scene, null, extension);
+        const object = this.createImportedObject(file.name, result.meshes);
+        this.selectObject(object);
+        this.setImportStatus(`Imported ${file.name}.`);
+      } catch (error) {
+        this.setImportStatus(`Failed to import ${file.name}: ${error.message}`);
+      }
+    }
+    this.updateObjectControls();
+  }
+
+  createImportedObject(name, meshes) {
+    const root = new BABYLON.TransformNode(`import_${this.importCounter}`, this.scene);
+    const imported = {
+      id: root.name,
+      name,
+      node: root,
+      meshes: meshes.filter(mesh => mesh !== this.scene.getMeshByName('__root__'))
+    };
+    this.importCounter += 1;
+
+    for (const mesh of meshes) {
+      if (mesh === root || mesh.name === '__root__') {
+        continue;
+      }
+      if (!mesh.parent) {
+        mesh.parent = root;
+      }
+      mesh.metadata = { type: 'sceneObject', objectType: 'imported', source: imported, movable: true };
+    }
+    root.metadata = { type: 'sceneObject', objectType: 'imported', source: imported, movable: true };
+    this.importedObjects.push(imported);
+    return imported;
+  }
+
+  selectObject(source) {
+    const object = normalizeSceneObject(source);
+    if (!object) {
+      return;
+    }
+    this.detachSelectedProbe();
+    this.selectedObject = object;
+    this.attachObjectGizmo(object.node);
+    this.updateObjectControls();
+    this.setStatus(`${object.name} selected for movement.`);
+  }
+
+  attachObjectGizmo(node) {
+    if (this.objectGizmoManager?.attachToNode) {
+      this.objectGizmoManager.attachToNode(node);
+    } else if (this.objectGizmoManager?.attachToMesh && node instanceof BABYLON.AbstractMesh) {
+      this.objectGizmoManager.attachToMesh(node);
+    }
+  }
+
+  detachSelectedObject() {
+    this.selectedObject = null;
+    this.objectGizmoManager?.attachToNode?.(null);
+    this.objectGizmoManager?.attachToMesh?.(null);
+    this.updateObjectControls();
+  }
+
+  syncSelectedObjectFromNode() {
+    if (!this.selectedObject) {
+      return;
+    }
+    const node = this.selectedObject.node;
+    const position = [round3(node.position.x), round3(node.position.y), round3(node.position.z)];
+    this.selectedObject.position = position;
+    if (this.selectedObject.objectType === 'speaker' || this.selectedObject.objectType === 'listener' || this.selectedObject.objectType === 'wall') {
+      this.selectedObject.source.position = position;
+    }
+    this.updateObjectControls();
+  }
+
+  updateSelectedObjectFromInputs() {
+    if (!this.selectedObject) {
+      return;
+    }
+    const position = [
+      clampNumber(this.objectControls.x?.value, this.appScene.bounds.min[0] - 1000, this.appScene.bounds.max[0] + 1000, 0),
+      clampNumber(this.objectControls.y?.value, this.appScene.bounds.min[1] - 1000, this.appScene.bounds.max[1] + 1000, 0),
+      clampNumber(this.objectControls.z?.value, this.appScene.bounds.min[2] - 1000, this.appScene.bounds.max[2] + 1000, 0)
+    ];
+    this.selectedObject.node.position = BABYLON.Vector3.FromArray(position);
+    this.syncSelectedObjectFromNode();
+    this.onSceneObjectChange();
+  }
+
+  deleteSelectedObject() {
+    if (!this.selectedObject) {
+      return;
+    }
+    const object = this.selectedObject;
+    if (object.objectType !== 'imported') {
+      this.setImportStatus('Built-in speakers, listener, and walls cannot be deleted here.');
+      return;
+    }
+    for (const mesh of object.meshes) {
+      mesh.dispose();
+    }
+    object.node.dispose();
+    this.importedObjects = this.importedObjects.filter(entry => entry !== object);
+    this.detachSelectedObject();
+    this.setImportStatus(`Deleted ${object.name}.`);
+  }
+
+  updateObjectControls() {
+    const object = this.selectedObject;
+    if (this.objectControls.stats) {
+      this.objectControls.stats.textContent = `${this.importedObjects.length} imported geometry object(s). Click speakers, walls, listener, or imported meshes to move them.`;
+    }
+    if (this.objectControls.selectedName) {
+      this.objectControls.selectedName.textContent = object ? `${object.name} / ${object.objectType}` : 'No object selected';
+    }
+    for (const input of [this.objectControls.x, this.objectControls.y, this.objectControls.z]) {
+      if (input) input.disabled = !object;
+    }
+    if (this.objectControls.deleteButton) {
+      this.objectControls.deleteButton.disabled = !object;
+    }
+    if (object) {
+      this.objectControls.x.value = String(round3(object.node.position.x));
+      this.objectControls.y.value = String(round3(object.node.position.y));
+      this.objectControls.z.value = String(round3(object.node.position.z));
+    }
+  }
+
+  setImportStatus(message) {
+    if (this.objectControls.importStatus) {
+      this.objectControls.importStatus.textContent = message;
+    }
+  }
+
+  runPreviewSolver() {
+    this.solverResult = solvePreviewAcousticField(this.appScene, this.previewBake?.probes ?? []);
+    if (this.solverControls.stats) {
+      this.solverControls.stats.textContent = [
+        `${this.solverResult.responses.length} responses`,
+        `${this.solverResult.occluded} occluded`,
+        `avg gain ${this.solverResult.averageGain.toFixed(3)}`
+      ].join(' / ');
+    }
+    this.setStatus('Preview acoustic solver completed.');
   }
 
   selectProbe(mesh) {
@@ -611,6 +818,18 @@ export class BabylonAuralisatorRenderer {
   }
 
   bindControls() {
+    this.objectControls.importInput?.addEventListener('change', event => this.importGeometryFiles(event.target.files));
+    this.objectControls.deleteButton?.addEventListener('click', () => this.deleteSelectedObject());
+    for (const input of [this.objectControls.x, this.objectControls.y, this.objectControls.z]) {
+      input?.addEventListener('change', () => this.updateSelectedObjectFromInputs());
+      input?.addEventListener('keydown', event => {
+        if (event.key === 'Enter') {
+          this.updateSelectedObjectFromInputs();
+        }
+      });
+    }
+    this.solverControls.runButton?.addEventListener('click', () => this.runPreviewSolver());
+
     this.canvas.addEventListener('click', () => {
       if (this.fpv.enabled && document.pointerLockElement !== this.canvas) {
         this.requestFpvPointerLock();
@@ -702,6 +921,10 @@ export class BabylonAuralisatorRenderer {
       const mesh = pointerInfo.pickInfo?.pickedMesh;
       if (mesh?.metadata?.type === 'probe') {
         this.selectProbe(mesh);
+        return;
+      }
+      if (mesh?.metadata?.type === 'sceneObject') {
+        this.selectObject(mesh.metadata);
       }
     });
   }
@@ -781,4 +1004,34 @@ function getLookForward(yaw, pitch) {
     Math.sin(pitch),
     -Math.cos(yaw) * Math.cos(pitch)
   );
+}
+
+function normalizeSceneObject(metadata) {
+  if (!metadata?.source) {
+    return null;
+  }
+  if (metadata.objectType === 'imported') {
+    return {
+      ...metadata.source,
+      objectType: 'imported',
+      node: metadata.source.node,
+      source: metadata.source
+    };
+  }
+  const source = metadata.source;
+  const node = metadata.node ?? null;
+  return {
+    id: source.id,
+    name: source.name ?? source.id,
+    objectType: metadata.objectType,
+    source,
+    node: node ?? findNodeFromSource(metadata)
+  };
+}
+
+function findNodeFromSource(metadata) {
+  if (metadata.objectType === 'wall') {
+    return metadata.source?._mesh ?? null;
+  }
+  return null;
 }

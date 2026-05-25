@@ -1,6 +1,6 @@
 import { createDefaultAuralisatorScene, summarizeScene } from './app/default-scene.js';
 import { AuralisatorAudioEngine } from './audio/audio-engine.js';
-import { BabylonAuralisatorRenderer } from './renderers/babylon/babylon-renderer.js?v=fpv1';
+import { BabylonAuralisatorRenderer } from './renderers/babylon/babylon-renderer.js?v=geom1';
 
 const appScene = createDefaultAuralisatorScene();
 const summary = summarizeScene(appScene);
@@ -15,6 +15,24 @@ const renderer = new BabylonAuralisatorRenderer({
   probeButton: document.getElementById('probeBtn'),
   legacyLink: document.getElementById('legacyLink'),
   onListenerChange: () => audioEngine.updateListenerTransform(),
+  onSceneObjectChange: () => {
+    audioEngine.updateSpeakerRoutes();
+    audioEngine.updateListenerTransform();
+  },
+  objectControls: {
+    importInput: document.getElementById('geometryImportInput'),
+    importStatus: document.getElementById('geometryImportStatus'),
+    selectedName: document.getElementById('selectedObjectName'),
+    stats: document.getElementById('objectStats'),
+    x: document.getElementById('objectX'),
+    y: document.getElementById('objectY'),
+    z: document.getElementById('objectZ'),
+    deleteButton: document.getElementById('deleteObjectBtn')
+  },
+  solverControls: {
+    runButton: document.getElementById('runPreviewSolverBtn'),
+    stats: document.getElementById('solverStats')
+  },
   probeControls: {
     gridMode: document.getElementById('probeGridMode'),
     spacing: document.getElementById('probeSpacing'),
