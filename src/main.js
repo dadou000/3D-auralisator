@@ -51,7 +51,20 @@ const audioEngine = new AuralisatorAudioEngine({
     sourceBlend: document.getElementById('sourceBlend'),
     masterGain: document.getElementById('masterGain'),
     masterGainValue: document.getElementById('masterGainValue'),
-    speakerGainContainer: document.getElementById('speakerGainContainer')
+    speakerGainContainer: document.getElementById('speakerGainContainer'),
+    hardwareGraph: document.getElementById('hardwareGraph'),
+    dspSummary: document.getElementById('dspSummary'),
+    dspInputGainL: document.getElementById('dspInputGainL'),
+    dspInputGainR: document.getElementById('dspInputGainR'),
+    dspHighpass: document.getElementById('dspHighpass'),
+    dspPeqFrequency: document.getElementById('dspPeqFrequency'),
+    dspPeqGain: document.getElementById('dspPeqGain'),
+    dspPeqQ: document.getElementById('dspPeqQ'),
+    dspLowpass: document.getElementById('dspLowpass'),
+    dspDelayL: document.getElementById('dspDelayL'),
+    dspDelayR: document.getElementById('dspDelayR'),
+    dspOutputGainL: document.getElementById('dspOutputGainL'),
+    dspOutputGainR: document.getElementById('dspOutputGainR')
   }
 });
 audioEngine.bind();

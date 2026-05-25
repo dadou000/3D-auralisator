@@ -6,6 +6,7 @@ export class AuralisatorAudioEngine {
     this.ctx = null;
     this.master = null;
     this.sourceBus = null;
+    this.mixSplitter = null;
     this.lineGain = null;
     this.fileGain = null;
     this.lineSource = null;
@@ -15,6 +16,7 @@ export class AuralisatorAudioEngine {
     this.audioElement.preload = 'metadata';
     this.audioElement.crossOrigin = 'anonymous';
     this.speakerRoutes = new Map();
+    this.dspRoutes = new Map();
     this.fileObjectUrl = null;
     this.lineEnabled = false;
   }
@@ -30,12 +32,28 @@ export class AuralisatorAudioEngine {
     this.controls.fileGain?.addEventListener('input', () => this.updateSourceGains());
     this.controls.sourceBlend?.addEventListener('input', () => this.updateSourceGains());
     this.controls.masterGain?.addEventListener('input', () => this.updateMasterGain());
+    for (const input of [
+      this.controls.dspInputGainL,
+      this.controls.dspInputGainR,
+      this.controls.dspHighpass,
+      this.controls.dspPeqFrequency,
+      this.controls.dspPeqGain,
+      this.controls.dspPeqQ,
+      this.controls.dspLowpass,
+      this.controls.dspDelayL,
+      this.controls.dspDelayR,
+      this.controls.dspOutputGainL,
+      this.controls.dspOutputGainR
+    ]) {
+      input?.addEventListener('input', () => this.updateDspFromControls());
+    }
 
     this.audioElement.addEventListener('timeupdate', () => this.updateFileTimeUi());
     this.audioElement.addEventListener('loadedmetadata', () => this.updateFileTimeUi());
     this.audioElement.addEventListener('ended', () => this.updateTransportUi());
 
     this.renderSpeakerControls();
+    this.renderHardwareGraph();
     this.updateStatus('Audio engine idle. Start audio before using line-in or file playback.');
   }
 
@@ -58,7 +76,7 @@ export class AuralisatorAudioEngine {
       this.controls.startButton.textContent = 'Audio running';
       this.controls.startButton.disabled = true;
     }
-    this.updateStatus('Audio engine running. Mixed bus is routed to the current speakers.');
+    this.updateStatus('Audio engine running through Mix Out L/R -> DSP -> Amp -> Speakers.');
   }
 
   async ensureContext() {
@@ -74,16 +92,55 @@ export class AuralisatorAudioEngine {
     this.sourceBus = this.ctx.createGain();
     this.lineGain = this.ctx.createGain();
     this.fileGain = this.ctx.createGain();
+    this.mixSplitter = this.ctx.createChannelSplitter(2);
 
     this.lineGain.connect(this.sourceBus);
     this.fileGain.connect(this.sourceBus);
+    this.sourceBus.connect(this.mixSplitter);
     this.master.connect(this.ctx.destination);
-    this.createSpeakerRoutes();
+    this.createHardwareRoutes();
     this.updateListenerTransform();
   }
 
+  createHardwareRoutes() {
+    this.createDspRoutes();
+    this.createSpeakerRoutes();
+  }
+
+  createDspRoutes() {
+    for (const channel of this.appScene.hardware.dsp.channels) {
+      const inputGain = this.ctx.createGain();
+      const highpass = this.ctx.createBiquadFilter();
+      const peq = this.ctx.createBiquadFilter();
+      const lowpass = this.ctx.createBiquadFilter();
+      const delay = this.ctx.createDelay(0.25);
+      const outputGain = this.ctx.createGain();
+
+      highpass.type = 'highpass';
+      peq.type = 'peaking';
+      lowpass.type = 'lowpass';
+
+      inputGain.connect(highpass);
+      highpass.connect(peq);
+      peq.connect(lowpass);
+      lowpass.connect(delay);
+      delay.connect(outputGain);
+
+      const splitterIndex = channel.channel === 'R' ? 1 : 0;
+      this.mixSplitter.connect(inputGain, splitterIndex, 0);
+      this.dspRoutes.set(channel.output, { channel, inputGain, highpass, peq, lowpass, delay, outputGain });
+    }
+    this.updateDspFromControls();
+  }
+
   createSpeakerRoutes() {
-    for (const speaker of this.appScene.speakers) {
+    for (const amp of this.appScene.hardware.amps) {
+      for (const ampChannel of amp.channels) {
+        const speaker = this.appScene.speakers.find(entry => entry.id === ampChannel.speakerId);
+        const dspRoute = this.dspRoutes.get(ampChannel.input);
+        if (!speaker || !dspRoute) {
+          continue;
+        }
       const gain = this.ctx.createGain();
       const panner = this.ctx.createPanner();
       panner.panningModel = 'HRTF';
@@ -98,11 +155,12 @@ export class AuralisatorAudioEngine {
       setAudioParam(panner.positionY, speaker.position[1]);
       setAudioParam(panner.positionZ, speaker.position[2]);
 
-      gain.gain.value = dbToLinear(speaker.gainDb ?? 0) / Math.max(1, this.appScene.speakers.length);
-      this.sourceBus.connect(gain);
+        gain.gain.value = ampChannel.muted ? 0 : ampChannel.gain;
+        dspRoute.outputGain.connect(gain);
       gain.connect(panner);
       panner.connect(this.master);
-      this.speakerRoutes.set(speaker.id, { speaker, gain, panner });
+        this.speakerRoutes.set(speaker.id, { speaker, amp, ampChannel, gain, panner });
+      }
     }
   }
 
@@ -113,10 +171,42 @@ export class AuralisatorAudioEngine {
       setAudioParam(route.panner.positionX, speaker.position[0]);
       setAudioParam(route.panner.positionY, speaker.position[1]);
       setAudioParam(route.panner.positionZ, speaker.position[2]);
-      const control = this.controls.speakerGainContainer?.querySelector(`[data-speaker-gain="${speaker.id}"]`);
+      const control = this.controls.speakerGainContainer?.querySelector(`[data-amp-channel-gain="${route.ampChannel.id}"]`);
       if (control) {
-        route.gain.gain.setTargetAtTime(Number(control.value), this.ctx.currentTime, 0.015);
+        route.ampChannel.gain = Number(control.value);
+        route.gain.gain.setTargetAtTime(route.ampChannel.muted ? 0 : route.ampChannel.gain, this.ctx.currentTime, 0.015);
       }
+    }
+  }
+
+  updateDspFromControls() {
+    const hardwareDsp = this.appScene.hardware.dsp;
+    for (const route of this.dspRoutes.values()) {
+      const isRight = route.channel.channel === 'R';
+      const blocks = route.channel.blocks;
+      blocks.inputGain.gain = Number((isRight ? this.controls.dspInputGainR : this.controls.dspInputGainL)?.value ?? 1);
+      blocks.highpass.frequency = Number(this.controls.dspHighpass?.value ?? 20);
+      blocks.peq.frequency = Number(this.controls.dspPeqFrequency?.value ?? 1000);
+      blocks.peq.gainDb = Number(this.controls.dspPeqGain?.value ?? 0);
+      blocks.peq.q = Number(this.controls.dspPeqQ?.value ?? 1);
+      blocks.lowpass.frequency = Number(this.controls.dspLowpass?.value ?? 20000);
+      blocks.delay.delayMs = Number((isRight ? this.controls.dspDelayR : this.controls.dspDelayL)?.value ?? 0);
+      blocks.outputGain.gain = Number((isRight ? this.controls.dspOutputGainR : this.controls.dspOutputGainL)?.value ?? 1);
+
+      route.inputGain.gain.setTargetAtTime(blocks.inputGain.gain, this.ctx.currentTime, 0.015);
+      route.highpass.frequency.setTargetAtTime(blocks.highpass.frequency, this.ctx.currentTime, 0.015);
+      route.highpass.Q.setTargetAtTime(blocks.highpass.q, this.ctx.currentTime, 0.015);
+      route.peq.frequency.setTargetAtTime(blocks.peq.frequency, this.ctx.currentTime, 0.015);
+      route.peq.gain.setTargetAtTime(blocks.peq.gainDb, this.ctx.currentTime, 0.015);
+      route.peq.Q.setTargetAtTime(blocks.peq.q, this.ctx.currentTime, 0.015);
+      route.lowpass.frequency.setTargetAtTime(blocks.lowpass.frequency, this.ctx.currentTime, 0.015);
+      route.lowpass.Q.setTargetAtTime(blocks.lowpass.q, this.ctx.currentTime, 0.015);
+      route.delay.delayTime.setTargetAtTime(blocks.delay.delayMs / 1000, this.ctx.currentTime, 0.015);
+      route.outputGain.gain.setTargetAtTime(blocks.outputGain.gain, this.ctx.currentTime, 0.015);
+    }
+
+    if (this.controls.dspSummary) {
+      this.controls.dspSummary.textContent = `${hardwareDsp.name}: Mix Out L/R -> DSP -> Amp -> Speakers`;
     }
   }
 
@@ -199,7 +289,7 @@ export class AuralisatorAudioEngine {
       this.controls.lineButton.textContent = 'Stop line-in';
     }
     await this.refreshInputDevices();
-    this.updateStatus('Line-in enabled and routed into the speaker mix.');
+    this.updateStatus('Line-in enabled and routed through the DSP hardware chain.');
   }
 
   stopLineInput({ silent = false } = {}) {
@@ -297,17 +387,53 @@ export class AuralisatorAudioEngine {
     for (const speaker of this.appScene.speakers) {
       const label = document.createElement('label');
       label.className = 'field speaker-gain';
-      label.textContent = speaker.name;
+      const route = findAmpChannelForSpeaker(this.appScene.hardware, speaker.id);
+      label.textContent = route ? `${route.amp.name} ${route.channel.name} -> ${speaker.name}` : speaker.name;
       const input = document.createElement('input');
       input.type = 'range';
       input.min = '0';
       input.max = '1.5';
       input.step = '0.01';
-      input.value = String(dbToLinear(speaker.gainDb ?? 0) / Math.max(1, this.appScene.speakers.length));
+      input.value = String(route?.channel.gain ?? 0.9);
       input.dataset.speakerGain = speaker.id;
+      if (route) {
+        input.dataset.ampChannelGain = route.channel.id;
+      }
       input.addEventListener('input', () => this.updateSpeakerRoutes());
       label.append(input);
       container.append(label);
+    }
+  }
+
+  renderHardwareGraph() {
+    if (!this.controls.hardwareGraph) {
+      return;
+    }
+    const graph = this.appScene.hardware;
+    this.controls.hardwareGraph.replaceChildren();
+    const rows = [
+      ['Mix Out L', 'DSP In L', 'DSP Out L', 'Amp A CH1', 'Left Speaker'],
+      ['Mix Out R', 'DSP In R', 'DSP Out R', 'Amp A CH2', 'Right Speaker']
+    ];
+    for (const row of rows) {
+      const line = document.createElement('div');
+      line.className = 'hardware-row';
+      for (const [index, name] of row.entries()) {
+        const node = document.createElement('span');
+        node.className = 'hardware-node';
+        node.textContent = name;
+        line.append(node);
+        if (index < row.length - 1) {
+          const wire = document.createElement('span');
+          wire.className = 'hardware-wire';
+          wire.textContent = '>';
+          line.append(wire);
+        }
+      }
+      this.controls.hardwareGraph.append(line);
+    }
+    if (this.controls.dspSummary) {
+      this.controls.dspSummary.textContent = `${graph.dsp.name}: ${graph.mixOutputs.length} inputs, ${graph.dsp.outputs.length} outputs, ${graph.amps.length} amp`;
     }
   }
 
@@ -358,4 +484,15 @@ function dbToLinear(db) {
 
 function degToRad(degrees) {
   return degrees * Math.PI / 180;
+}
+
+function findAmpChannelForSpeaker(graph, speakerId) {
+  for (const amp of graph.amps) {
+    for (const channel of amp.channels) {
+      if (channel.speakerId === speakerId) {
+        return { amp, channel };
+      }
+    }
+  }
+  return null;
 }

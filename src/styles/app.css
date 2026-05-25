@@ -274,6 +274,54 @@ input:disabled {
   color: #d6e8ec;
 }
 
+.hardware-graph {
+  display: grid;
+  gap: 8px;
+  overflow-x: auto;
+}
+
+.hardware-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: max-content;
+}
+
+.hardware-node {
+  min-width: 82px;
+  padding: 8px 9px;
+  border: 1px solid rgba(81, 210, 242, 0.28);
+  border-radius: 7px;
+  background: #152128;
+  color: #e4f8ff;
+  text-align: center;
+  font-size: 12px;
+}
+
+.hardware-wire {
+  color: #83d9ef;
+  font-size: 13px;
+}
+
+.dsp-grid {
+  display: grid;
+  gap: 9px;
+}
+
+.dsp-block {
+  display: grid;
+  gap: 9px;
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: #172024;
+}
+
+.dsp-block strong {
+  color: #e4f8ff;
+  font-size: 13px;
+}
+
 @media (max-width: 900px) {
   .app-shell {
     grid-template-columns: 1fr;

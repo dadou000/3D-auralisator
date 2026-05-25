@@ -1,5 +1,7 @@
+import { createDefaultHardwareGraph } from '../hardware/hardware-model.js';
+
 export function createDefaultAuralisatorScene() {
-  return {
+  const scene = {
     id: 'default-studio',
     units: 'meters',
     bounds: {
@@ -54,6 +56,8 @@ export function createDefaultAuralisatorScene() {
       runtimeMode: 'baked-field'
     }
   };
+  scene.hardware = createDefaultHardwareGraph(scene.speakers);
+  return scene;
 }
 
 export function summarizeScene(scene) {

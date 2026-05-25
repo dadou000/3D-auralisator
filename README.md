@@ -18,6 +18,8 @@ The Babylon shell includes a probe editor for switching between 2D/3D preview gr
 
 It also includes a first live audio input layer: browser line-in capture, local audio file playback with seeking, line/file mixing, master gain, and per-speaker routing to the current speaker positions.
 
+The signal chain is now modeled as hardware: Mix Out L/R feeds a SigmaStudio-style DSP block, DSP outputs feed stereo amp channels, and amp channels feed the current speakers.
+
 ## Development
 
 New renderer and baked-acoustics work lives under `src` and is covered by Node tests:
