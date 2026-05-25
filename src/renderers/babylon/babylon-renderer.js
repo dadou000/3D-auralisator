@@ -1,4 +1,9 @@
-import { createPreviewBake } from '../../acoustic/bake/preview-bake.js';
+import {
+  createManualProbe,
+  createPreviewBake,
+  PROBE_GRID_MODES,
+  relinkProbeNeighbors
+} from '../../acoustic/bake/preview-bake.js';
 import { ProbeFieldSampler } from '../../acoustic/runtime/probe-field.js';
 
 const MATERIAL_COLORS = Object.freeze({
@@ -9,19 +14,31 @@ const MATERIAL_COLORS = Object.freeze({
 });
 
 export class BabylonAuralisatorRenderer {
-  constructor({ canvas, statusEl, inspectorButton, probeButton, legacyLink } = {}) {
+  constructor({
+    canvas,
+    statusEl,
+    inspectorButton,
+    probeButton,
+    legacyLink,
+    probeControls = {}
+  } = {}) {
     this.canvas = canvas;
     this.statusEl = statusEl;
     this.inspectorButton = inspectorButton;
     this.probeButton = probeButton;
     this.legacyLink = legacyLink;
+    this.probeControls = probeControls;
     this.engine = null;
     this.scene = null;
     this.appScene = null;
     this.probeMeshes = [];
+    this.probeById = new Map();
     this.probesVisible = true;
     this.previewBake = null;
     this.sampler = null;
+    this.selectedProbe = null;
+    this.manualProbeCounter = 1;
+    this.gizmoManager = null;
   }
 
   async init(appScene) {
@@ -41,6 +58,7 @@ export class BabylonAuralisatorRenderer {
     this.createEnvironment();
     this.createSceneObjects(appScene);
     this.createPreviewProbeField(appScene);
+    this.createProbeGizmo();
     this.bindControls();
 
     this.engine.runRenderLoop(() => {
@@ -107,6 +125,8 @@ export class BabylonAuralisatorRenderer {
       speaker: makePbrMaterial(this.scene, 'mat_speaker', [0.05, 0.06, 0.07], 0.55, 0),
       speakerCone: makePbrMaterial(this.scene, 'mat_speaker_cone', [0.95, 0.65, 0.18], 0.48, 0),
       probe: makePbrMaterial(this.scene, 'mat_probe', [0.1, 0.75, 1], 0.2, 0),
+      manualProbe: makePbrMaterial(this.scene, 'mat_manual_probe', [1, 0.66, 0.2], 0.24, 0),
+      selectedProbe: makePbrMaterial(this.scene, 'mat_selected_probe', [1, 0.96, 0.32], 0.18, 0),
       zone: makePbrMaterial(this.scene, 'mat_zone', [0.12, 0.5, 0.85], 0.8, 0)
     };
 
@@ -247,25 +267,205 @@ export class BabylonAuralisatorRenderer {
     this.previewBake = createPreviewBake({
       sceneId: appScene.id,
       bounds: appScene.bounds,
-      spacing: appScene.acoustic.previewProbeSpacing
+      spacing: appScene.acoustic.previewProbeSpacing,
+      gridMode: appScene.acoustic.probeGridMode,
+      planeY: appScene.acoustic.previewProbePlaneY
     });
+    this.rebuildSampler();
+    this.renderProbeMeshes();
+    this.updateProbeControls();
+  }
+
+  renderProbeMeshes() {
+    this.detachSelectedProbe();
+    for (const mesh of this.probeMeshes) {
+      mesh.dispose();
+    }
+    this.probeMeshes = [];
+    this.probeById.clear();
+
+    for (const probe of this.previewBake.probes) {
+      this.createProbeMesh(probe);
+    }
+  }
+
+  createProbeMesh(probe) {
+    const mesh = BABYLON.MeshBuilder.CreateSphere(`mesh_${probe.id}`, { diameter: 0.18, segments: 14 }, this.scene);
+    mesh.position = BABYLON.Vector3.FromArray(probe.position);
+    mesh.material = probe.manual ? this.materials.manualProbe : this.materials.probe;
+    mesh.isVisible = this.probesVisible;
+    mesh.isPickable = true;
+    mesh.metadata = { type: 'probe', probe };
+    this.probeMeshes.push(mesh);
+    this.probeById.set(probe.id, mesh);
+    return mesh;
+  }
+
+  createProbeGizmo() {
+    this.gizmoManager = new BABYLON.GizmoManager(this.scene);
+    this.gizmoManager.positionGizmoEnabled = true;
+    this.gizmoManager.rotationGizmoEnabled = false;
+    this.gizmoManager.scaleGizmoEnabled = false;
+    this.gizmoManager.usePointerToAttachGizmos = false;
+    this.gizmoManager.attachToMesh(null);
+
+    const positionGizmo = this.gizmoManager.gizmos.positionGizmo;
+    if (positionGizmo?.onDragEndObservable) {
+      positionGizmo.onDragEndObservable.add(() => this.commitSelectedProbePosition());
+    }
+    if (positionGizmo?.onDragObservable) {
+      positionGizmo.onDragObservable.add(() => this.syncSelectedProbeFromMesh());
+    }
+  }
+
+  rebuildSampler() {
+    relinkProbeNeighbors(this.previewBake.probes, this.appScene.acoustic.previewProbeSpacing * 1.1);
+    const probeIds = this.previewBake.probes.map(probe => probe.id);
+    this.previewBake.manifest.chunks[0].probeIds = probeIds;
+    this.previewBake.cells[0].probeIds = probeIds;
     this.sampler = new ProbeFieldSampler({
       probes: this.previewBake.probes,
       zones: this.previewBake.manifest.zones,
       cells: this.previewBake.cells,
       maxProbeCount: 4
     });
+  }
 
-    const positions = this.previewBake.probes.map(probe => BABYLON.Vector3.FromArray(probe.position));
-    const base = BABYLON.MeshBuilder.CreateSphere('probe_base', { diameter: 0.16, segments: 12 }, this.scene);
-    base.material = this.materials.probe;
-    base.isVisible = false;
+  rebuildProbeGridFromControls() {
+    this.appScene.acoustic.probeGridMode = this.probeControls.gridMode?.value ?? PROBE_GRID_MODES.grid3d;
+    this.appScene.acoustic.previewProbeSpacing = clampNumber(this.probeControls.spacing?.value, 0.5, 20, 4);
+    this.appScene.acoustic.previewProbePlaneY = clampNumber(
+      this.probeControls.planeY?.value,
+      this.appScene.bounds.min[1],
+      this.appScene.bounds.max[1],
+      1.6
+    );
+    this.createPreviewProbeField(this.appScene);
+    this.setStatus(`Rebuilt ${this.appScene.acoustic.probeGridMode.toUpperCase()} probe grid.`);
+  }
 
-    for (const position of positions) {
-      const instance = base.createInstance(`probe_${this.probeMeshes.length}`);
-      instance.position = position;
-      instance.isPickable = false;
-      this.probeMeshes.push(instance);
+  addManualProbe() {
+    const target = this.camera?.target ?? new BABYLON.Vector3(0, this.appScene.acoustic.previewProbePlaneY, 0);
+    const position = [
+      clamp(target.x, this.appScene.bounds.min[0], this.appScene.bounds.max[0]),
+      clamp(this.appScene.listener.position[1], this.appScene.bounds.min[1], this.appScene.bounds.max[1]),
+      clamp(target.z, this.appScene.bounds.min[2], this.appScene.bounds.max[2])
+    ];
+    const probe = createManualProbe({
+      id: `manual_probe_${String(this.manualProbeCounter).padStart(3, '0')}`,
+      position,
+      spacing: this.appScene.acoustic.previewProbeSpacing
+    });
+    this.manualProbeCounter += 1;
+    this.previewBake.probes.push(probe);
+    this.rebuildSampler();
+    const mesh = this.createProbeMesh(probe);
+    this.selectProbe(mesh);
+    this.updateProbeControls();
+    this.setStatus(`Added ${probe.id}.`);
+  }
+
+  deleteSelectedProbe() {
+    if (!this.selectedProbe) {
+      return;
+    }
+    const probe = this.selectedProbe.metadata.probe;
+    this.previewBake.probes = this.previewBake.probes.filter(entry => entry.id !== probe.id);
+    this.selectedProbe.dispose();
+    this.probeMeshes = this.probeMeshes.filter(mesh => mesh !== this.selectedProbe);
+    this.probeById.delete(probe.id);
+    this.detachSelectedProbe();
+    this.rebuildSampler();
+    this.updateProbeControls();
+    this.setStatus(`Deleted ${probe.id}.`);
+  }
+
+  selectProbe(mesh) {
+    if (!mesh?.metadata || mesh.metadata.type !== 'probe') {
+      return;
+    }
+    if (this.selectedProbe && this.selectedProbe.metadata?.probe) {
+      this.selectedProbe.material = this.selectedProbe.metadata.probe.manual
+        ? this.materials.manualProbe
+        : this.materials.probe;
+    }
+    this.selectedProbe = mesh;
+    this.selectedProbe.material = this.materials.selectedProbe;
+    this.gizmoManager?.attachToMesh(mesh);
+    this.updateProbeControls();
+    this.setStatus(`${mesh.metadata.probe.id} selected. Move it with the gizmo or numeric fields.`);
+  }
+
+  detachSelectedProbe() {
+    if (this.selectedProbe && !this.selectedProbe.isDisposed()) {
+      this.selectedProbe.material = this.selectedProbe.metadata?.probe?.manual
+        ? this.materials.manualProbe
+        : this.materials.probe;
+    }
+    this.selectedProbe = null;
+    this.gizmoManager?.attachToMesh(null);
+  }
+
+  commitSelectedProbePosition() {
+    this.syncSelectedProbeFromMesh();
+    this.rebuildSampler();
+    this.setStatus(`${this.selectedProbe?.metadata?.probe?.id ?? 'Probe'} moved.`);
+  }
+
+  syncSelectedProbeFromMesh() {
+    if (!this.selectedProbe?.metadata?.probe) {
+      return;
+    }
+    const probe = this.selectedProbe.metadata.probe;
+    probe.position = [
+      round3(this.selectedProbe.position.x),
+      round3(this.selectedProbe.position.y),
+      round3(this.selectedProbe.position.z)
+    ];
+    this.updateProbeControls();
+  }
+
+  updateSelectedProbeFromInputs() {
+    if (!this.selectedProbe?.metadata?.probe) {
+      return;
+    }
+    const position = [
+      clampNumber(this.probeControls.x?.value, this.appScene.bounds.min[0], this.appScene.bounds.max[0], 0),
+      clampNumber(this.probeControls.y?.value, this.appScene.bounds.min[1], this.appScene.bounds.max[1], 1.6),
+      clampNumber(this.probeControls.z?.value, this.appScene.bounds.min[2], this.appScene.bounds.max[2], 0)
+    ];
+    this.selectedProbe.position = BABYLON.Vector3.FromArray(position);
+    this.commitSelectedProbePosition();
+  }
+
+  updateProbeControls() {
+    const controls = this.probeControls;
+    if (controls.gridMode) controls.gridMode.value = this.appScene.acoustic.probeGridMode;
+    if (controls.spacing) controls.spacing.value = String(this.appScene.acoustic.previewProbeSpacing);
+    if (controls.planeY) controls.planeY.value = String(this.appScene.acoustic.previewProbePlaneY);
+    if (controls.stats) {
+      const mode = this.appScene.acoustic.probeGridMode === PROBE_GRID_MODES.grid2d ? '2D' : '3D';
+      controls.stats.textContent = `${this.previewBake?.probes.length ?? 0} probes / ${mode} grid / ${this.appScene.acoustic.previewProbeSpacing} m spacing`;
+    }
+
+    const probe = this.selectedProbe?.metadata?.probe ?? null;
+    if (controls.selectedName) {
+      controls.selectedName.textContent = probe ? `${probe.id}${probe.manual ? ' / manual' : ' / grid'}` : 'No probe selected';
+    }
+    for (const input of [controls.x, controls.y, controls.z]) {
+      if (input) input.disabled = !probe;
+    }
+    if (controls.deleteButton) {
+      controls.deleteButton.disabled = !probe;
+    }
+    if (probe) {
+      controls.x.value = String(probe.position[0]);
+      controls.y.value = String(probe.position[1]);
+      controls.z.value = String(probe.position[2]);
+    } else {
+      if (controls.x) controls.x.value = '';
+      if (controls.y) controls.y.value = '';
+      if (controls.z) controls.z.value = '';
     }
   }
 
@@ -283,7 +483,40 @@ export class BabylonAuralisatorRenderer {
       for (const mesh of this.probeMeshes) {
         mesh.isVisible = this.probesVisible;
       }
+      if (!this.probesVisible) {
+        this.detachSelectedProbe();
+        this.updateProbeControls();
+      }
       this.probeButton.setAttribute('aria-pressed', String(this.probesVisible));
+    });
+
+    this.probeControls.rebuildButton?.addEventListener('click', () => this.rebuildProbeGridFromControls());
+    this.probeControls.addButton?.addEventListener('click', () => this.addManualProbe());
+    this.probeControls.deleteButton?.addEventListener('click', () => this.deleteSelectedProbe());
+    for (const input of [this.probeControls.x, this.probeControls.y, this.probeControls.z]) {
+      input?.addEventListener('change', () => this.updateSelectedProbeFromInputs());
+      input?.addEventListener('keydown', event => {
+        if (event.key === 'Enter') {
+          this.updateSelectedProbeFromInputs();
+        }
+      });
+    }
+    this.probeControls.gridMode?.addEventListener('change', () => {
+      this.appScene.acoustic.probeGridMode = this.probeControls.gridMode.value;
+      this.updateProbeControls();
+    });
+    this.probeControls.spacing?.addEventListener('change', () => {
+      this.appScene.acoustic.previewProbeSpacing = clampNumber(this.probeControls.spacing.value, 0.5, 20, 4);
+      this.updateProbeControls();
+    });
+    this.probeControls.planeY?.addEventListener('change', () => {
+      this.appScene.acoustic.previewProbePlaneY = clampNumber(
+        this.probeControls.planeY.value,
+        this.appScene.bounds.min[1],
+        this.appScene.bounds.max[1],
+        1.6
+      );
+      this.updateProbeControls();
     });
 
     this.inspectorButton?.addEventListener('click', async () => {
@@ -299,6 +532,16 @@ export class BabylonAuralisatorRenderer {
       if (pick?.pickedMesh?.metadata?.source) {
         const source = pick.pickedMesh.metadata.source;
         this.setStatus(`${source.name ?? source.id} selected for renderer inspection.`);
+      }
+    });
+
+    this.scene.onPointerObservable.add(pointerInfo => {
+      if (pointerInfo.type !== BABYLON.PointerEventTypes.POINTERPICK) {
+        return;
+      }
+      const mesh = pointerInfo.pickInfo?.pickedMesh;
+      if (mesh?.metadata?.type === 'probe') {
+        this.selectProbe(mesh);
       }
     });
   }
@@ -337,4 +580,20 @@ function makeLabel(scene, text, position, parent) {
   plane.material = mat;
   plane.isPickable = false;
   return mat;
+}
+
+function clampNumber(value, min, max, fallback) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return clamp(parsed, min, max);
+}
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function round3(value) {
+  return Math.round(value * 1000) / 1000;
 }

@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createPreviewBake } from '../src/acoustic/bake/preview-bake.js';
+import {
+  createManualProbe,
+  createPreviewBake,
+  PROBE_GRID_MODES,
+  relinkProbeNeighbors
+} from '../src/acoustic/bake/preview-bake.js';
 import { createEmptyBakeManifest } from '../src/acoustic/schema.js';
 import { isBakeManifestUsable, validateBakeManifest } from '../src/acoustic/storage/manifest.js';
 import { ProbeFieldSampler, interpolateScalar } from '../src/acoustic/runtime/probe-field.js';
@@ -15,6 +20,36 @@ test('creates a valid preview bake manifest', () => {
   assert.equal(validateBakeManifest(bake.manifest).length, 0);
   assert.equal(bake.probes.length, 4);
   assert.equal(bake.cells.length, 1);
+});
+
+test('creates 2D probe grids at a controlled height', () => {
+  const bake = createPreviewBake({
+    sceneId: 'test-scene',
+    bounds: { min: [0, 0, 0], max: [4, 4, 4] },
+    spacing: 4,
+    gridMode: PROBE_GRID_MODES.grid2d,
+    planeY: 1.6
+  });
+
+  assert.equal(bake.probes.length, 4);
+  assert.deepEqual([...new Set(bake.probes.map(probe => probe.position[1]))], [1.6]);
+  assert.equal(bake.manifest.probeLayout.gridMode, '2d');
+});
+
+test('manual probes participate in neighbor relinking', () => {
+  const manual = createManualProbe({
+    id: 'manual_001',
+    position: [2, 1.6, 2],
+    spacing: 4
+  });
+  const probes = [
+    { id: 'probe_000', position: [0, 1.6, 0], neighbors: [] },
+    manual
+  ];
+
+  relinkProbeNeighbors(probes, 4);
+  assert.equal(manual.manual, true);
+  assert.deepEqual(probes[0].neighbors, ['manual_001']);
 });
 
 test('probe sampler interpolates only within a requested acoustic region', () => {

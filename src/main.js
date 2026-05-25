@@ -9,7 +9,20 @@ const renderer = new BabylonAuralisatorRenderer({
   statusEl: document.getElementById('statusText'),
   inspectorButton: document.getElementById('inspectorBtn'),
   probeButton: document.getElementById('probeBtn'),
-  legacyLink: document.getElementById('legacyLink')
+  legacyLink: document.getElementById('legacyLink'),
+  probeControls: {
+    gridMode: document.getElementById('probeGridMode'),
+    spacing: document.getElementById('probeSpacing'),
+    planeY: document.getElementById('probePlaneY'),
+    rebuildButton: document.getElementById('rebuildProbesBtn'),
+    addButton: document.getElementById('addProbeBtn'),
+    deleteButton: document.getElementById('deleteProbeBtn'),
+    selectedName: document.getElementById('selectedProbeName'),
+    stats: document.getElementById('probeStats'),
+    x: document.getElementById('probeX'),
+    y: document.getElementById('probeY'),
+    z: document.getElementById('probeZ')
+  }
 });
 
 document.getElementById('sceneStats').textContent = [

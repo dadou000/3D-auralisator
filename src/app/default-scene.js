@@ -48,7 +48,9 @@ export function createDefaultAuralisatorScene() {
     ],
     acoustic: {
       activeBakeId: null,
+      probeGridMode: '3d',
       previewProbeSpacing: 4,
+      previewProbePlaneY: 1.6,
       runtimeMode: 'baked-field'
     }
   };

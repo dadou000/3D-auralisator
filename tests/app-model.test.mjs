@@ -12,6 +12,8 @@ test('default app scene exposes renderer migration primitives', () => {
   assert.equal(summary.walls, 5);
   assert.equal(summary.rooms, 1);
   assert.equal(scene.acoustic.runtimeMode, 'baked-field');
+  assert.equal(scene.acoustic.probeGridMode, '3d');
+  assert.equal(scene.acoustic.previewProbePlaneY, 1.6);
 });
 
 test('default scene can generate a preview acoustic bake', () => {
@@ -19,7 +21,9 @@ test('default scene can generate a preview acoustic bake', () => {
   const bake = createPreviewBake({
     sceneId: scene.id,
     bounds: scene.bounds,
-    spacing: scene.acoustic.previewProbeSpacing
+    spacing: scene.acoustic.previewProbeSpacing,
+    gridMode: scene.acoustic.probeGridMode,
+    planeY: scene.acoustic.previewProbePlaneY
   });
 
   assert.ok(bake.probes.length > 0);

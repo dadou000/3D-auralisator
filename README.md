@@ -14,6 +14,8 @@ On Windows, double-click `launch-3d-auralisator.bat` to start the local server a
 
 The main app now uses the Babylon renderer migration shell. The old Three.js single-file app is preserved as `legacy-three.html`.
 
+The Babylon shell includes a probe editor for switching between 2D/3D preview grids, rebuilding spacing, adding manual probes, moving selected probes, and deleting custom points.
+
 ## Development
 
 New renderer and baked-acoustics work lives under `src` and is covered by Node tests:
