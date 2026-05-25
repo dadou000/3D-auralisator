@@ -19,11 +19,13 @@
           <span>Babylon renderer / baked acoustic field foundation</span>
         </div>
         <div class="toolbar" aria-label="Renderer controls">
+          <button id="fpvBtn" type="button" aria-pressed="false" onclick="window.__auralisatorToggleFpv?.()">FPV</button>
           <button id="probeBtn" type="button" aria-pressed="true">Probes</button>
           <button id="inspectorBtn" type="button">Inspector</button>
           <a id="legacyLink" class="button-link" href="./legacy-three.html">Legacy app</a>
         </div>
       </div>
+      <div id="fpvHud" class="fpv-hud" hidden>WASD move / mouse look / Shift sprint / Q-E height / Esc exits</div>
     </section>
 
     <aside class="side-panel" aria-label="Acoustic bake status">
@@ -236,6 +238,6 @@
       </section>
     </aside>
   </main>
-  <script type="module" src="./src/main.js"></script>
+  <script type="module" src="./src/main.js?v=fpv1"></script>
 </body>
 </html>

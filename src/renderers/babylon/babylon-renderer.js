@@ -17,16 +17,22 @@ export class BabylonAuralisatorRenderer {
   constructor({
     canvas,
     statusEl,
+    fpvButton,
+    fpvHud,
     inspectorButton,
     probeButton,
     legacyLink,
+    onListenerChange = () => {},
     probeControls = {}
   } = {}) {
     this.canvas = canvas;
     this.statusEl = statusEl;
+    this.fpvButton = fpvButton;
+    this.fpvHud = fpvHud;
     this.inspectorButton = inspectorButton;
     this.probeButton = probeButton;
     this.legacyLink = legacyLink;
+    this.onListenerChange = onListenerChange;
     this.probeControls = probeControls;
     this.engine = null;
     this.scene = null;
@@ -39,6 +45,16 @@ export class BabylonAuralisatorRenderer {
     this.selectedProbe = null;
     this.manualProbeCounter = 1;
     this.gizmoManager = null;
+    this.listenerNode = null;
+    this.fpv = {
+      enabled: false,
+      yaw: 0,
+      pitch: 0,
+      speed: 3.2,
+      sprintMultiplier: 2.1,
+      mouseSensitivity: 0.0022,
+      keys: Object.create(null)
+    };
   }
 
   async init(appScene) {
@@ -62,6 +78,7 @@ export class BabylonAuralisatorRenderer {
     this.bindControls();
 
     this.engine.runRenderLoop(() => {
+      this.updateFpv(this.engine.getDeltaTime() / 1000);
       this.animateProbeField();
       this.scene.render();
     });
@@ -230,6 +247,7 @@ export class BabylonAuralisatorRenderer {
     nose.material = this.materials.speakerCone;
 
     makeLabel(this.scene, 'Listener', new BABYLON.Vector3(0, 0.45, 0), root);
+    this.listenerNode = root;
     return root;
   }
 
@@ -477,7 +495,149 @@ export class BabylonAuralisatorRenderer {
     }
   }
 
+  enterFpvMode() {
+    if (this.fpv.enabled) {
+      return;
+    }
+    const listener = this.appScene.listener;
+    this.fpv.enabled = true;
+    this.fpv.yaw = BABYLON.Tools.ToRadians(listener.yaw ?? 0);
+    this.fpv.pitch = BABYLON.Tools.ToRadians(listener.pitch ?? 0);
+    this.detachSelectedProbe();
+    this.camera.detachControl(this.canvas);
+    this.camera.lowerRadiusLimit = 0.1;
+    this.camera.upperRadiusLimit = 0.1;
+    this.fpvButton?.setAttribute('aria-pressed', 'true');
+    if (this.fpvHud) this.fpvHud.hidden = false;
+    this.syncCameraToListener();
+    this.onListenerChange();
+    this.setStatus('FPV mode active. Walk around to hear the room from the listener position.');
+    this.requestFpvPointerLock();
+  }
+
+  exitFpvMode() {
+    if (!this.fpv.enabled) {
+      return;
+    }
+    this.fpv.enabled = false;
+    this.fpv.keys = Object.create(null);
+    if (document.pointerLockElement === this.canvas) {
+      document.exitPointerLock?.();
+    }
+    this.camera.lowerRadiusLimit = 3;
+    this.camera.upperRadiusLimit = 60;
+    this.camera.attachControl(this.canvas, true);
+    this.camera.radius = 15;
+    this.fpvButton?.setAttribute('aria-pressed', 'false');
+    if (this.fpvHud) this.fpvHud.hidden = true;
+    this.setStatus('FPV mode exited.');
+  }
+
+  toggleFpvMode() {
+    if (this.fpv.enabled) {
+      this.exitFpvMode();
+    } else {
+      this.enterFpvMode();
+    }
+  }
+
+  updateFpv(deltaSeconds) {
+    if (!this.fpv.enabled || !this.appScene?.listener) {
+      return;
+    }
+    const keys = this.fpv.keys;
+    const listener = this.appScene.listener;
+    const forward = getHorizontalForward(this.fpv.yaw);
+    const right = new BABYLON.Vector3(forward.z, 0, -forward.x);
+    const move = new BABYLON.Vector3(0, 0, 0);
+
+    if (keys.KeyW) move.addInPlace(forward);
+    if (keys.KeyS) move.subtractInPlace(forward);
+    if (keys.KeyD) move.addInPlace(right);
+    if (keys.KeyA) move.subtractInPlace(right);
+    if (keys.KeyE || keys.Space) move.y += 1;
+    if (keys.KeyQ || keys.KeyC) move.y -= 1;
+
+    if (move.lengthSquared() > 0) {
+      move.normalize();
+      const speed = this.fpv.speed * (keys.ShiftLeft || keys.ShiftRight ? this.fpv.sprintMultiplier : 1);
+      const current = BABYLON.Vector3.FromArray(listener.position);
+      current.addInPlace(move.scale(speed * deltaSeconds));
+      listener.position = [
+        round3(clamp(current.x, this.appScene.bounds.min[0] + 0.2, this.appScene.bounds.max[0] - 0.2)),
+        round3(clamp(current.y, this.appScene.bounds.min[1] + 0.2, this.appScene.bounds.max[1] - 0.2)),
+        round3(clamp(current.z, this.appScene.bounds.min[2] + 0.2, this.appScene.bounds.max[2] - 0.2))
+      ];
+      this.syncListenerVisual();
+      this.onListenerChange();
+    }
+
+    this.syncCameraToListener();
+  }
+
+  syncCameraToListener() {
+    const listener = this.appScene.listener;
+    const position = BABYLON.Vector3.FromArray(listener.position);
+    const forward = getLookForward(this.fpv.yaw, this.fpv.pitch);
+    this.camera.position.copyFrom(position);
+    this.camera.target.copyFrom(position.add(forward));
+  }
+
+  syncListenerVisual() {
+    if (!this.listenerNode) {
+      return;
+    }
+    const listener = this.appScene.listener;
+    this.listenerNode.position = BABYLON.Vector3.FromArray(listener.position);
+    this.listenerNode.rotation.y = BABYLON.Tools.ToRadians(listener.yaw ?? 0);
+    this.listenerNode.rotation.x = BABYLON.Tools.ToRadians(listener.pitch ?? 0);
+  }
+
+  handleFpvMouseMove(event) {
+    if (!this.fpv.enabled || document.pointerLockElement !== this.canvas) {
+      return;
+    }
+    this.fpv.yaw -= event.movementX * this.fpv.mouseSensitivity;
+    this.fpv.pitch = clamp(
+      this.fpv.pitch - event.movementY * this.fpv.mouseSensitivity,
+      BABYLON.Tools.ToRadians(-80),
+      BABYLON.Tools.ToRadians(80)
+    );
+    this.appScene.listener.yaw = round3(BABYLON.Tools.ToDegrees(this.fpv.yaw));
+    this.appScene.listener.pitch = round3(BABYLON.Tools.ToDegrees(this.fpv.pitch));
+    this.syncListenerVisual();
+    this.syncCameraToListener();
+    this.onListenerChange();
+  }
+
   bindControls() {
+    this.canvas.addEventListener('click', () => {
+      if (this.fpv.enabled && document.pointerLockElement !== this.canvas) {
+        this.requestFpvPointerLock();
+      }
+    });
+    window.addEventListener('keydown', event => {
+      if (!this.fpv.enabled) {
+        return;
+      }
+      this.fpv.keys[event.code] = true;
+      if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space', 'KeyQ', 'KeyE', 'KeyC', 'ShiftLeft', 'ShiftRight'].includes(event.code)) {
+        event.preventDefault();
+      }
+    }, { passive: false });
+    window.addEventListener('keyup', event => {
+      if (!this.fpv.enabled) {
+        return;
+      }
+      this.fpv.keys[event.code] = false;
+    });
+    document.addEventListener('mousemove', event => this.handleFpvMouseMove(event));
+    document.addEventListener('pointerlockchange', () => {
+      if (this.fpv.enabled && document.pointerLockElement !== this.canvas) {
+        this.exitFpvMode();
+      }
+    });
+
     this.probeButton?.addEventListener('click', () => {
       this.probesVisible = !this.probesVisible;
       for (const mesh of this.probeMeshes) {
@@ -546,6 +706,19 @@ export class BabylonAuralisatorRenderer {
     });
   }
 
+  requestFpvPointerLock() {
+    try {
+      const lockRequest = this.canvas.requestPointerLock?.();
+      if (lockRequest?.catch) {
+        lockRequest.catch(() => {
+          this.setStatus('FPV mode active without pointer lock. Click the canvas for mouse look.');
+        });
+      }
+    } catch {
+      this.setStatus('FPV mode active without pointer lock. Click the canvas for mouse look.');
+    }
+  }
+
   setStatus(message) {
     if (!this.statusEl) {
       return;
@@ -596,4 +769,16 @@ function clamp(value, min, max) {
 
 function round3(value) {
   return Math.round(value * 1000) / 1000;
+}
+
+function getHorizontalForward(yaw) {
+  return new BABYLON.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw));
+}
+
+function getLookForward(yaw, pitch) {
+  return new BABYLON.Vector3(
+    -Math.sin(yaw) * Math.cos(pitch),
+    Math.sin(pitch),
+    -Math.cos(yaw) * Math.cos(pitch)
+  );
 }

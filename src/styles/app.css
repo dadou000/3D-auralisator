@@ -81,6 +81,23 @@ body {
   pointer-events: auto;
 }
 
+.fpv-hud {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  max-width: min(680px, calc(100% - 28px));
+  padding: 9px 12px;
+  border: 1px solid rgba(81, 210, 242, 0.28);
+  border-radius: 8px;
+  background: rgba(6, 9, 11, 0.78);
+  color: #e4f8ff;
+  font-size: 13px;
+  text-align: center;
+  backdrop-filter: blur(16px);
+  pointer-events: none;
+}
+
 button,
 .button-link {
   min-height: 34px;

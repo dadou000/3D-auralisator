@@ -1,6 +1,6 @@
 import { createDefaultAuralisatorScene, summarizeScene } from './app/default-scene.js';
 import { AuralisatorAudioEngine } from './audio/audio-engine.js';
-import { BabylonAuralisatorRenderer } from './renderers/babylon/babylon-renderer.js';
+import { BabylonAuralisatorRenderer } from './renderers/babylon/babylon-renderer.js?v=fpv1';
 
 const appScene = createDefaultAuralisatorScene();
 const summary = summarizeScene(appScene);
@@ -9,9 +9,12 @@ initSideTabs();
 const renderer = new BabylonAuralisatorRenderer({
   canvas: document.getElementById('renderCanvas'),
   statusEl: document.getElementById('statusText'),
+  fpvButton: document.getElementById('fpvBtn'),
+  fpvHud: document.getElementById('fpvHud'),
   inspectorButton: document.getElementById('inspectorBtn'),
   probeButton: document.getElementById('probeBtn'),
   legacyLink: document.getElementById('legacyLink'),
+  onListenerChange: () => audioEngine.updateListenerTransform(),
   probeControls: {
     gridMode: document.getElementById('probeGridMode'),
     spacing: document.getElementById('probeSpacing'),
@@ -26,6 +29,7 @@ const renderer = new BabylonAuralisatorRenderer({
     z: document.getElementById('probeZ')
   }
 });
+window.__auralisatorToggleFpv = () => renderer.toggleFpvMode();
 
 document.getElementById('sceneStats').textContent = [
   `${summary.speakers} speakers`,
