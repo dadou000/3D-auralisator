@@ -16,6 +16,8 @@ The main app now uses the Babylon renderer migration shell. The old Three.js sin
 
 The Babylon shell includes a probe editor for switching between 2D/3D preview grids, rebuilding spacing, adding manual probes, moving selected probes, and deleting custom points.
 
+It also includes a first live audio input layer: browser line-in capture, local audio file playback with seeking, line/file mixing, master gain, and per-speaker routing to the current speaker positions.
+
 ## Development
 
 New renderer and baked-acoustics work lives under `src` and is covered by Node tests:

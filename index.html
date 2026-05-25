@@ -33,6 +33,53 @@
       </section>
 
       <section class="panel-section">
+        <h3>Audio Inputs</h3>
+        <button id="audioStartBtn" type="button">Start audio</button>
+        <label class="field">
+          Line input
+          <select id="lineDeviceSelect">
+            <option value="">Default input</option>
+          </select>
+        </label>
+        <div class="button-row">
+          <button id="lineInputBtn" type="button">Enable line-in</button>
+          <label class="field">
+            Line gain <span id="lineGainValue">0.80</span>
+            <input id="lineGain" type="range" min="0" max="1.5" step="0.01" value="0.8" />
+          </label>
+        </div>
+        <label class="field">
+          Local audio file
+          <input id="audioFileInput" type="file" accept="audio/*" />
+        </label>
+        <div id="audioFileName" class="status">No audio file loaded.</div>
+        <div class="button-row">
+          <button id="filePlayBtn" type="button">Play file</button>
+          <label class="field">
+            File gain <span id="fileGainValue">0.80</span>
+            <input id="fileGain" type="range" min="0" max="1.5" step="0.01" value="0.8" />
+          </label>
+        </div>
+        <label class="field">
+          Seek <span id="fileTime">0:00 / 0:00</span>
+          <input id="fileSeek" type="range" min="0" max="1000" step="1" value="0" />
+        </label>
+        <label class="field">
+          Source blend
+          <input id="sourceBlend" type="range" min="-1" max="1" step="0.01" value="0" />
+        </label>
+        <label class="field">
+          Master gain <span id="masterGainValue">0.80</span>
+          <input id="masterGain" type="range" min="0" max="1.5" step="0.01" value="0.8" />
+        </label>
+        <div class="selected-probe">
+          <div id="speakerMixTitle">Speaker routing</div>
+          <div id="speakerGainContainer" class="speaker-list"></div>
+        </div>
+        <div id="audioStatus" class="status">Audio engine idle.</div>
+      </section>
+
+      <section class="panel-section">
         <h3>Probe Editor</h3>
         <label class="field">
           Grid mode
@@ -103,7 +150,7 @@
           </div>
           <div class="metric">
             <span>Audio</span>
-            <strong>Next</strong>
+            <strong id="audioMetric">Live</strong>
           </div>
         </div>
       </section>

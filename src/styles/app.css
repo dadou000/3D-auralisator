@@ -240,6 +240,15 @@ select {
   padding: 0 9px;
 }
 
+input[type="range"] {
+  padding: 0;
+  accent-color: #51d2f2;
+}
+
+input[type="file"] {
+  padding: 7px 9px;
+}
+
 input:disabled {
   color: #677a80;
   background: #101719;
@@ -248,6 +257,21 @@ input:disabled {
 #deleteProbeBtn {
   border-color: rgba(255, 119, 119, 0.22);
   background: rgba(49, 24, 27, 0.82);
+}
+
+#speakerMixTitle {
+  color: #e4f8ff;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.speaker-list {
+  display: grid;
+  gap: 8px;
+}
+
+.speaker-gain {
+  color: #d6e8ec;
 }
 
 @media (max-width: 900px) {
