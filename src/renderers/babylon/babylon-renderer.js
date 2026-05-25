@@ -599,10 +599,12 @@ export class BabylonAuralisatorRenderer {
       this.solverControls.stats.textContent = [
         `${this.solverResult.responses.length} responses`,
         `${this.solverResult.occluded} occluded`,
+        `${this.solverResult.stats.earlyEventCount} early events`,
+        `${this.solverResult.stats.lowFrequencyBinCount} LF bins`,
         `avg gain ${this.solverResult.averageGain.toFixed(3)}`
       ].join(' / ');
     }
-    this.setStatus('Preview acoustic solver completed.');
+    this.setStatus('Preview baked-field solver completed.');
   }
 
   selectProbe(mesh) {

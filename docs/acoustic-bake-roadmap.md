@@ -58,7 +58,7 @@ The bake system should produce multiple representations instead of one giant ste
 5. Preview Baker
    - Generate acoustic zones from rooms.
    - Generate coarse probes.
-   - Bake direct path and first-order reflections.
+   - Bake direct path, first-order reflections, late-field summaries, and low-frequency complex pressure bins.
    - Export and reload a `.auralbake` package.
 
 6. Adaptive Baker

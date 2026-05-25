@@ -22,7 +22,7 @@ The signal chain is now modeled as hardware in its own Routing tab: Mix Out L/R 
 
 FPV mode lets the listener walk the room with WASD and mouse look while the Web Audio listener follows the camera.
 
-The Objects tab adds movable walls, speakers, listener, imported GLB/embedded glTF geometry, and a Blender 4.x+ exporter for converting Blender/FBX scenes to app-ready GLB files. The Runtime tab also has the first preview acoustic solver pass for probe delay/gain and coarse wall occlusion checks.
+The Objects tab adds movable walls, speakers, listener, imported GLB/embedded glTF geometry, and a Blender 4.x+ exporter for converting Blender/FBX scenes to app-ready GLB files. The Runtime tab also has the first preview baked-field solver pass with direct probe response, sparse first-order reflections, late-field summaries, low-frequency complex pressure bins, and coarse wall occlusion checks.
 
 ## Development
 
