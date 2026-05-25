@@ -1,0 +1,219 @@
+:root {
+  color-scheme: dark;
+  font-family: "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  background: #080a0c;
+  color: #e8f3f5;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+body {
+  background: #080a0c;
+}
+
+.app-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  width: 100vw;
+  height: 100vh;
+}
+
+.viewport {
+  position: relative;
+  min-width: 0;
+  background: #020304;
+}
+
+#renderCanvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  outline: none;
+  touch-action: none;
+}
+
+.topbar {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  right: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  pointer-events: none;
+}
+
+.brand {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  background: rgba(6, 9, 11, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  backdrop-filter: blur(16px);
+}
+
+.brand strong {
+  font-size: 15px;
+  letter-spacing: 0;
+}
+
+.brand span {
+  color: #a9bec4;
+  font-size: 12px;
+}
+
+.toolbar {
+  display: flex;
+  gap: 8px;
+  pointer-events: auto;
+}
+
+button,
+.button-link {
+  min-height: 34px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 7px;
+  background: rgba(20, 31, 35, 0.9);
+  color: #effcff;
+  font: inherit;
+  font-size: 13px;
+  padding: 0 12px;
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+button:hover,
+.button-link:hover {
+  background: rgba(35, 55, 62, 0.95);
+}
+
+button[aria-pressed="true"] {
+  border-color: rgba(87, 211, 255, 0.75);
+  color: #d9f8ff;
+}
+
+.side-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+  padding: 18px;
+  background: #11171a;
+  border-left: 1px solid rgba(255, 255, 255, 0.09);
+  overflow: auto;
+}
+
+.panel-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.panel-section h2,
+.panel-section h3 {
+  margin: 0;
+  letter-spacing: 0;
+}
+
+.panel-section h2 {
+  font-size: 18px;
+}
+
+.panel-section h3 {
+  font-size: 13px;
+  color: #8eb4bd;
+  text-transform: uppercase;
+}
+
+.metric-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.metric {
+  min-height: 72px;
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: #172024;
+}
+
+.metric span {
+  display: block;
+  color: #9db2b8;
+  font-size: 12px;
+}
+
+.metric strong {
+  display: block;
+  margin-top: 8px;
+  font-size: 20px;
+}
+
+.status {
+  margin-top: auto;
+  color: #bdd1d6;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.pipeline {
+  display: grid;
+  gap: 8px;
+}
+
+.pipeline div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 10px;
+  border-radius: 8px;
+  background: #172024;
+  color: #dcecef;
+  font-size: 13px;
+}
+
+.pipeline span {
+  color: #83d9ef;
+  font-size: 12px;
+}
+
+@media (max-width: 900px) {
+  .app-shell {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, 1fr) auto;
+  }
+
+  .side-panel {
+    max-height: 42vh;
+    border-left: 0;
+    border-top: 1px solid rgba(255, 255, 255, 0.09);
+  }
+
+  .topbar {
+    align-items: flex-start;
+  }
+
+  .toolbar {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+}

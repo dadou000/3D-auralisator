@@ -4,11 +4,17 @@ This simple software lets you build speakers and listen to them in a 3D space.
 
 ## Run locally
 
-Open `index.html` in a browser, or serve the folder with any static file server.
+Serve the folder with any static file server and open `index.html`.
+
+```sh
+python -m http.server 8080 --bind 127.0.0.1
+```
+
+The main app now uses the Babylon renderer migration shell. The old Three.js single-file app is preserved as `legacy-three.html`.
 
 ## Development
 
-The current public app is still the static `index.html` build. New baked-acoustics work lives under `src/acoustic` and is covered by Node tests:
+New renderer and baked-acoustics work lives under `src` and is covered by Node tests:
 
 ```sh
 npm test

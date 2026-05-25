@@ -39,28 +39,34 @@ The bake system should produce multiple representations instead of one giant ste
    - Add bake schema, manifest validator, preview probe generator, and runtime probe sampler.
    - Keep the current app behavior unchanged.
 
-2. UI Integration
+2. Renderer Migration
+   - Move the main entry point to a Babylon-based renderer shell.
+   - Preserve the old Three.js app as a legacy fallback.
+   - Visualize rooms, walls, speakers, listener, acoustic bounds, and preview probes.
+   - Keep the acoustic data model engine-neutral.
+
+3. UI Integration
    - Add an Acoustic Bake panel.
    - Add Preview Bake, Load Bake, Clear Bake, and probe/debug overlays.
 
-3. Runtime Playback
+4. Runtime Playback
    - Add runtime cell lookup.
    - Add valid probe interpolation.
    - Add crossfaded late convolution.
    - Add direct path correction from baked data.
 
-4. Preview Baker
+5. Preview Baker
    - Generate acoustic zones from rooms.
    - Generate coarse probes.
    - Bake direct path and first-order reflections.
    - Export and reload a `.auralbake` package.
 
-5. Adaptive Baker
+6. Adaptive Baker
    - Compare neighboring probe responses.
    - Subdivide high-error areas.
    - Prevent interpolation across walls by using rooms, portals, and occlusion regions.
 
-6. Production Baker
+7. Production Baker
    - Add high-count path tracing, diffraction/scattering approximations, low-frequency pressure fields, directional late IRs, compression, and validation passes.
 
 ## Open Decisions
