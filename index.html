@@ -95,6 +95,11 @@
         <div id="hardwareGraph" class="node-editor"></div>
         <div id="dspSummary" class="status">DSP graph loading...</div>
         <div id="routingOptionsPanel" class="dsp-grid routing-options-panel">
+          <div class="routing-options-header">
+            <span>Selected node</span>
+            <strong id="routingOptionsTitle">No node selected</strong>
+            <small id="routingOptionsHint">Select a routing object to show its controls.</small>
+          </div>
           <div class="dsp-block" data-option-group="input">
             <strong>Input</strong>
             <div class="field-row">
@@ -268,6 +273,6 @@
       </section>
     </aside>
   </main>
-  <script type="module" src="./src/main.js?v=routing-options1"></script>
+  <script type="module" src="./src/main.js?v=routing-options2"></script>
 </body>
 </html>

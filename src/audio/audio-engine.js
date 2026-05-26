@@ -628,6 +628,12 @@ export class AuralisatorAudioEngine {
     const panel = this.controls.routingOptionsPanel;
     const summary = this.controls.dspSummary;
     if (!node || !panel) {
+      if (this.controls.routingOptionsTitle) {
+        this.controls.routingOptionsTitle.textContent = 'No node selected';
+      }
+      if (this.controls.routingOptionsHint) {
+        this.controls.routingOptionsHint.textContent = 'Select a routing object to show its controls.';
+      }
       if (summary) {
         summary.textContent = 'Select a routing node to show its editable options.';
       }
@@ -636,6 +642,12 @@ export class AuralisatorAudioEngine {
     const groups = optionGroupsForRoutingNode(node);
     panel.dataset.selectedNodeType = node.type;
     panel.dataset.selectedNodeId = node.id;
+    if (this.controls.routingOptionsTitle) {
+      this.controls.routingOptionsTitle.textContent = `${node.title} options`;
+    }
+    if (this.controls.routingOptionsHint) {
+      this.controls.routingOptionsHint.textContent = routingOptionSummary(node);
+    }
     for (const block of panel.querySelectorAll('[data-option-group]')) {
       block.hidden = !groups.includes(block.dataset.optionGroup);
     }

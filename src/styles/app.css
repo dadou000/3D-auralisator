@@ -635,6 +635,7 @@ body.routing-fullscreen .node-editor {
 .node-port,
 .routing-inspector-ports span {
   position: relative;
+  min-height: 28px;
   padding: 5px 7px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 6px;
@@ -650,9 +651,10 @@ body.routing-fullscreen .node-editor {
 .node-port::before {
   content: "";
   display: inline-block;
-  width: 7px;
-  height: 7px;
+  width: 9px;
+  height: 9px;
   margin-right: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
   border-radius: 50%;
   background: #51d2f2;
 }
@@ -665,23 +667,23 @@ body.routing-fullscreen .node-editor {
   content: "";
   position: absolute;
   top: 50%;
-  width: 13px;
-  height: 13px;
-  border: 2px solid #071012;
+  width: 18px;
+  height: 18px;
+  border: 3px solid #071012;
   border-radius: 50%;
   background: #51d2f2;
-  box-shadow: 0 0 0 2px rgba(81, 210, 242, 0.35);
+  box-shadow: 0 0 0 2px rgba(81, 210, 242, 0.65), 0 0 12px rgba(81, 210, 242, 0.45);
   transform: translateY(-50%);
 }
 
 .node-port.in::after {
-  left: -18px;
+  left: -25px;
   background: #f4b24d;
-  box-shadow: 0 0 0 2px rgba(244, 178, 77, 0.35);
+  box-shadow: 0 0 0 2px rgba(244, 178, 77, 0.65), 0 0 12px rgba(244, 178, 77, 0.45);
 }
 
 .node-port.out::after {
-  right: -18px;
+  right: -25px;
 }
 
 .routing-inspector-note {
@@ -706,8 +708,38 @@ body.routing-fullscreen .node-editor {
   background: #0c1417;
 }
 
+.routing-options-header {
+  display: grid;
+  gap: 3px;
+  padding: 10px;
+  border: 1px solid rgba(81, 210, 242, 0.18);
+  border-radius: 8px;
+  background: #101b1f;
+}
+
+.routing-options-header span {
+  color: #8eb4bd;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.routing-options-header strong {
+  color: #e4f8ff;
+  font-size: 15px;
+}
+
+.routing-options-header small {
+  color: #a4bbc2;
+  font-size: 12px;
+}
+
 body.routing-fullscreen .routing-options-panel {
   grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+body.routing-fullscreen .routing-options-header {
+  grid-column: 1 / -1;
 }
 
 .dsp-block[hidden] {
