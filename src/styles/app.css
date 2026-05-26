@@ -474,6 +474,14 @@ body.routing-fullscreen .node-editor {
   stroke: #ffffff;
 }
 
+.routing-wire.preview {
+  stroke: #ffffff;
+  stroke-dasharray: 10 8;
+  stroke-width: 3;
+  opacity: 0.9;
+  pointer-events: none;
+}
+
 .routing-wire.selected {
   stroke-width: 4;
   opacity: 1;
@@ -653,6 +661,10 @@ body.routing-fullscreen .node-editor {
   background: #0d1519;
   color: #d6e8ec;
   font-size: 12px;
+}
+
+.node-port {
+  cursor: crosshair;
 }
 
 .node-port.out {

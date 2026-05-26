@@ -70,6 +70,8 @@ export class AuralisatorAudioEngine {
     this.routingConnections = null;
     this.routingConnectionCounter = 1;
     this.pendingRoutingPort = null;
+    this.routingDrag = null;
+    this.suppressRoutingPortClick = false;
     this.selectedRoutingConnectionId = null;
     this.selectedRoutingNodeId = null;
   }
@@ -477,6 +479,9 @@ export class AuralisatorAudioEngine {
     const surface = document.createElement('div');
     surface.className = 'routing-surface';
     surface.tabIndex = 0;
+    surface.addEventListener('contextmenu', event => {
+      event.preventDefault();
+    });
     surface.addEventListener('click', event => {
       if (event.target === surface) {
         this.pendingRoutingPort = null;
@@ -564,12 +569,24 @@ export class AuralisatorAudioEngine {
       </div>
     `;
     for (const port of card.querySelectorAll('.node-port')) {
-      port.addEventListener('pointerdown', event => event.stopPropagation());
+      port.addEventListener('pointerdown', event => {
+        event.stopPropagation();
+        this.beginRoutingPortDrag(event, port, node, surface);
+      });
       port.addEventListener('click', event => {
         event.stopPropagation();
+        if (this.suppressRoutingPortClick) {
+          this.suppressRoutingPortClick = false;
+          return;
+        }
         this.handleRoutingPortClick(port, node);
       });
       port.addEventListener('dblclick', event => {
+        event.stopPropagation();
+        this.disconnectRoutingPort(port.dataset.port);
+      });
+      port.addEventListener('contextmenu', event => {
+        event.preventDefault();
         event.stopPropagation();
         this.disconnectRoutingPort(port.dataset.port);
       });
@@ -587,7 +604,76 @@ export class AuralisatorAudioEngine {
       this.renderHardwareGraph();
     });
     card.addEventListener('pointerdown', event => this.beginRoutingDrag(event, node, card, surface));
+    card.addEventListener('contextmenu', event => {
+      event.preventDefault();
+      event.stopPropagation();
+      this.deleteRoutingNode(node.id);
+    });
     return card;
+  }
+
+  beginRoutingPortDrag(event, port, node, surface) {
+    if (event.button !== 0) {
+      return;
+    }
+    const source = {
+      nodeId: node.id,
+      portId: port.dataset.port,
+      kind: port.dataset.kind
+    };
+    this.pendingRoutingPort = source;
+    this.selectedRoutingNodeId = node.id;
+    this.selectedRoutingConnectionId = null;
+    this.routingDrag = {
+      source,
+      didDrag: false,
+      pointerId: event.pointerId
+    };
+    this.updateStatus(`Drag from ${source.portId} to a ${source.kind === 'out' ? 'target input' : 'source output'} socket.`);
+    const svg = surface.querySelector('.routing-wires');
+    this.markPendingRoutingPort(surface);
+    const move = moveEvent => {
+      if (!this.routingDrag) {
+        return;
+      }
+      if (Math.hypot(moveEvent.clientX - event.clientX, moveEvent.clientY - event.clientY) > 3) {
+        this.routingDrag.didDrag = true;
+      }
+      this.renderRoutingPreviewWire(surface, svg, source, moveEvent.clientX, moveEvent.clientY);
+    };
+    const end = upEvent => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', end);
+      const targetPort = document.elementFromPoint(upEvent.clientX, upEvent.clientY)?.closest?.('.node-port');
+      this.clearRoutingPreviewWire(svg);
+      const didDrag = this.routingDrag?.didDrag;
+      this.routingDrag = null;
+      this.suppressRoutingPortClick = true;
+      if (!didDrag) {
+        return;
+      }
+      this.pendingRoutingPort = null;
+      if (!targetPort) {
+        this.updateStatus('Connection cancelled.');
+        this.renderHardwareGraph();
+        return;
+      }
+      const target = {
+        nodeId: targetPort.dataset.nodeId,
+        portId: targetPort.dataset.port,
+        kind: targetPort.dataset.kind
+      };
+      if (source.nodeId === target.nodeId || source.kind === target.kind) {
+        this.updateStatus('Connection cancelled. Drag from an output socket to an input socket on another node.');
+        this.renderHardwareGraph();
+        return;
+      }
+      const from = source.kind === 'out' ? source : target;
+      const to = source.kind === 'in' ? source : target;
+      this.connectRoutingPorts(from, to);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', end);
   }
 
   beginRoutingDrag(event, node, card, surface) {
@@ -629,6 +715,23 @@ export class AuralisatorAudioEngine {
       ports: template.ports.map(port => ({ ...port, id: `${id}_${port.id}` }))
     });
     this.selectedRoutingNodeId = id;
+    this.renderHardwareGraph();
+  }
+
+  deleteRoutingNode(nodeId) {
+    const node = this.routingNodes.find(entry => entry.id === nodeId);
+    if (!node) {
+      return;
+    }
+    const ports = new Set(node.ports.map(port => port.id));
+    this.routingConnections = this.routingConnections.filter(connection => !ports.has(connection.from) && !ports.has(connection.to));
+    this.routingNodes = this.routingNodes.filter(entry => entry.id !== nodeId);
+    if (this.selectedRoutingNodeId === nodeId) {
+      this.selectedRoutingNodeId = this.routingNodes[0]?.id ?? null;
+    }
+    this.pendingRoutingPort = null;
+    this.selectedRoutingConnectionId = null;
+    this.updateStatus(`Deleted routing node ${node.title}.`);
     this.renderHardwareGraph();
   }
 
@@ -799,9 +902,39 @@ export class AuralisatorAudioEngine {
         event.stopPropagation();
         this.disconnectRoutingConnection(connection.id);
       });
+      path.addEventListener('contextmenu', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        this.disconnectRoutingConnection(connection.id);
+      });
       svg.append(path);
     }
     this.markPendingRoutingPort(surface);
+  }
+
+  renderRoutingPreviewWire(surface, svg, source, clientX, clientY) {
+    if (!surface || !svg) return;
+    this.clearRoutingPreviewWire(svg);
+    const sourcePort = findRoutingPort(surface, source.portId, source.kind);
+    if (!sourcePort) return;
+    const surfaceRect = surface.getBoundingClientRect();
+    const a = centerRelativeTo(sourcePort, surfaceRect);
+    const b = {
+      x: clientX - surfaceRect.left,
+      y: clientY - surfaceRect.top
+    };
+    const start = source.kind === 'out' ? a : b;
+    const end = source.kind === 'out' ? b : a;
+    const mid = Math.max(60, Math.abs(end.x - start.x) * 0.45);
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.dataset.previewWire = 'true';
+    path.setAttribute('class', 'routing-wire preview');
+    path.setAttribute('d', `M ${start.x} ${start.y} C ${start.x + mid} ${start.y}, ${end.x - mid} ${end.y}, ${end.x} ${end.y}`);
+    svg.append(path);
+  }
+
+  clearRoutingPreviewWire(svg) {
+    svg?.querySelector('[data-preview-wire="true"]')?.remove();
   }
 
   markPendingRoutingPort(surface) {
