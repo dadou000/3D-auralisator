@@ -1,6 +1,6 @@
 import { createDefaultAuralisatorScene, summarizeScene } from './app/default-scene.js';
-import { AuralisatorAudioEngine } from './audio/audio-engine.js?v=polish6';
-import { BabylonAuralisatorRenderer } from './renderers/babylon/babylon-renderer.js?v=polish6';
+import { AuralisatorAudioEngine } from './audio/audio-engine.js?v=routing-options1';
+import { BabylonAuralisatorRenderer } from './renderers/babylon/babylon-renderer.js?v=routing-options1';
 
 const appScene = createDefaultAuralisatorScene();
 const summary = summarizeScene(appScene);
@@ -78,6 +78,7 @@ const audioEngine = new AuralisatorAudioEngine({
     speakerGainContainer: document.getElementById('speakerGainContainer'),
     hardwareGraph: document.getElementById('hardwareGraph'),
     dspSummary: document.getElementById('dspSummary'),
+    routingOptionsPanel: document.getElementById('routingOptionsPanel'),
     dspInputGainL: document.getElementById('dspInputGainL'),
     dspInputGainR: document.getElementById('dspInputGainR'),
     dspHighpass: document.getElementById('dspHighpass'),

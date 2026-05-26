@@ -490,9 +490,7 @@ export class AuralisatorAudioEngine {
     workspace.append(toolbox, surface, inspector);
     this.controls.hardwareGraph.append(workspace);
     requestAnimationFrame(() => this.renderRoutingWires(surface, svg));
-    if (this.controls.dspSummary) {
-      this.controls.dspSummary.textContent = `${graph.dsp.name}: drag modules from the toolbox, select DSP/filter nodes to edit processing.`;
-    }
+    this.updateRoutingOptionsPanel();
   }
 
   createRoutingToolbox() {
@@ -623,6 +621,27 @@ export class AuralisatorAudioEngine {
     }
     inspector.append(ports);
     return inspector;
+  }
+
+  updateRoutingOptionsPanel() {
+    const node = this.routingNodes?.find(entry => entry.id === this.selectedRoutingNodeId) ?? null;
+    const panel = this.controls.routingOptionsPanel;
+    const summary = this.controls.dspSummary;
+    if (!node || !panel) {
+      if (summary) {
+        summary.textContent = 'Select a routing node to show its editable options.';
+      }
+      return;
+    }
+    const groups = optionGroupsForRoutingNode(node);
+    panel.dataset.selectedNodeType = node.type;
+    panel.dataset.selectedNodeId = node.id;
+    for (const block of panel.querySelectorAll('[data-option-group]')) {
+      block.hidden = !groups.includes(block.dataset.optionGroup);
+    }
+    if (summary) {
+      summary.textContent = `${node.title}: ${routingOptionSummary(node)}`;
+    }
   }
 
   renderRoutingWires(surface, svg) {
@@ -787,6 +806,38 @@ function renderNodeBody(node) {
     return '<div class="filter-face"><span></span><span></span><span></span></div>';
   }
   return '<div class="meter-face"><span></span><span></span></div>';
+}
+
+function optionGroupsForRoutingNode(node) {
+  if (node.type === 'input' || node.type === 'mix') {
+    return ['input'];
+  }
+  if (node.type === 'dsp' || node.type === 'filter') {
+    return ['input', 'filters', 'output'];
+  }
+  if (node.type === 'amp' || node.type === 'speaker') {
+    return ['output'];
+  }
+  return [];
+}
+
+function routingOptionSummary(node) {
+  if (node.type === 'input') {
+    return 'line/file level and stereo input trim are visible below.';
+  }
+  if (node.type === 'mix') {
+    return 'mix bus input trim is visible below.';
+  }
+  if (node.type === 'dsp' || node.type === 'filter') {
+    return 'input gain, HPF, PEQ, LPF, delay, and output gain are visible below.';
+  }
+  if (node.type === 'amp') {
+    return 'amp feed delay and output gain are visible below.';
+  }
+  if (node.type === 'speaker') {
+    return 'speaker feed output options are visible below.';
+  }
+  return 'no editable options for this module yet.';
 }
 
 function findRoutingPort(surface, portId, preferredKind) {
