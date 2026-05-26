@@ -467,6 +467,17 @@ body.routing-fullscreen .node-editor {
   stroke-width: 2.5;
   stroke-linecap: round;
   opacity: 0.72;
+  pointer-events: stroke;
+}
+
+.routing-wire.manual {
+  stroke: #ffffff;
+}
+
+.routing-wire.selected {
+  stroke-width: 4;
+  opacity: 1;
+  filter: drop-shadow(0 0 6px rgba(81, 210, 242, 0.7));
 }
 
 .routing-wire.mix-to-dsp {
@@ -676,6 +687,15 @@ body.routing-fullscreen .node-editor {
   transform: translateY(-50%);
 }
 
+.node-port.pending-connect {
+  border-color: rgba(255, 255, 255, 0.42);
+  background: #18272d;
+}
+
+.node-port.pending-connect::after {
+  animation: socketPulse 0.9s ease-in-out infinite alternate;
+}
+
 .node-port.in::after {
   left: -25px;
   background: #f4b24d;
@@ -686,6 +706,15 @@ body.routing-fullscreen .node-editor {
   right: -25px;
 }
 
+@keyframes socketPulse {
+  from {
+    transform: translateY(-50%) scale(1);
+  }
+  to {
+    transform: translateY(-50%) scale(1.22);
+  }
+}
+
 .routing-inspector-note {
   margin-bottom: 10px;
   padding: 9px;
@@ -694,6 +723,19 @@ body.routing-fullscreen .node-editor {
   background: #0c1417;
   color: #bdd1d6;
   font-size: 12px;
+}
+
+.selected-wire-panel {
+  display: grid;
+  gap: 8px;
+  border-color: rgba(255, 255, 255, 0.2);
+  color: #effcff;
+}
+
+.routing-disconnect-btn {
+  width: 100%;
+  border-color: rgba(255, 119, 119, 0.35);
+  background: rgba(64, 24, 29, 0.9);
 }
 
 .dsp-grid {

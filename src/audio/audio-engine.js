@@ -67,6 +67,10 @@ export class AuralisatorAudioEngine {
     this.lineEnabled = false;
     this.routingNodeCounter = 1;
     this.routingNodes = null;
+    this.routingConnections = null;
+    this.routingConnectionCounter = 1;
+    this.pendingRoutingPort = null;
+    this.selectedRoutingConnectionId = null;
     this.selectedRoutingNodeId = null;
   }
 
@@ -462,6 +466,8 @@ export class AuralisatorAudioEngine {
     this.controls.hardwareGraph.replaceChildren();
     if (!this.routingNodes) {
       this.routingNodes = createInitialRoutingNodes(graph, this.appScene.speakers);
+      this.routingConnections = createInitialRoutingConnections(graph);
+      this.routingConnectionCounter = this.routingConnections.length + 1;
       this.selectedRoutingNodeId = graph.dsp.id;
     }
 
@@ -470,6 +476,20 @@ export class AuralisatorAudioEngine {
     const toolbox = this.createRoutingToolbox();
     const surface = document.createElement('div');
     surface.className = 'routing-surface';
+    surface.tabIndex = 0;
+    surface.addEventListener('click', event => {
+      if (event.target === surface) {
+        this.pendingRoutingPort = null;
+        this.selectedRoutingConnectionId = null;
+        this.renderHardwareGraph();
+      }
+    });
+    surface.addEventListener('keydown', event => {
+      if ((event.key === 'Delete' || event.key === 'Backspace') && this.selectedRoutingConnectionId) {
+        event.preventDefault();
+        this.disconnectRoutingConnection(this.selectedRoutingConnectionId);
+      }
+    });
     surface.addEventListener('dragover', event => event.preventDefault());
     surface.addEventListener('drop', event => {
       event.preventDefault();
@@ -540,12 +560,30 @@ export class AuralisatorAudioEngine {
       </div>
       <div class="routing-node-body">${renderNodeBody(node)}</div>
       <div class="routing-node-ports">
-        ${node.ports.map(port => `<span class="node-port ${port.kind}" data-port="${port.id}">${port.label}</span>`).join('')}
+        ${node.ports.map(port => `<span class="node-port ${port.kind}" data-node-id="${node.id}" data-port="${port.id}" data-kind="${port.kind}">${port.label}</span>`).join('')}
       </div>
     `;
+    for (const port of card.querySelectorAll('.node-port')) {
+      port.addEventListener('pointerdown', event => event.stopPropagation());
+      port.addEventListener('click', event => {
+        event.stopPropagation();
+        this.handleRoutingPortClick(port, node);
+      });
+      port.addEventListener('dblclick', event => {
+        event.stopPropagation();
+        this.disconnectRoutingPort(port.dataset.port);
+      });
+    }
     card.addEventListener('click', event => {
       event.stopPropagation();
+      const port = event.target.closest?.('.node-port');
+      if (port) {
+        this.handleRoutingPortClick(port, node);
+        return;
+      }
       this.selectedRoutingNodeId = node.id;
+      this.pendingRoutingPort = null;
+      this.selectedRoutingConnectionId = null;
       this.renderHardwareGraph();
     });
     card.addEventListener('pointerdown', event => this.beginRoutingDrag(event, node, card, surface));
@@ -554,6 +592,7 @@ export class AuralisatorAudioEngine {
 
   beginRoutingDrag(event, node, card, surface) {
     if (event.button !== 0) return;
+    if (event.target.closest?.('.node-port')) return;
     const rect = surface.getBoundingClientRect();
     const startX = event.clientX;
     const startY = event.clientY;
@@ -593,13 +632,90 @@ export class AuralisatorAudioEngine {
     this.renderHardwareGraph();
   }
 
+  handleRoutingPortClick(port, node) {
+    const clicked = {
+      nodeId: node.id,
+      portId: port.dataset.port,
+      kind: port.dataset.kind
+    };
+    this.selectedRoutingNodeId = node.id;
+    this.selectedRoutingConnectionId = null;
+
+    if (!this.pendingRoutingPort) {
+      this.pendingRoutingPort = clicked;
+      this.updateStatus(`Selected ${clicked.portId}. Click a ${clicked.kind === 'out' ? 'target input' : 'source output'} socket to connect.`);
+      this.renderHardwareGraph();
+      return;
+    }
+
+    const first = this.pendingRoutingPort;
+    this.pendingRoutingPort = null;
+    if (first.nodeId === clicked.nodeId || first.kind === clicked.kind) {
+      this.updateStatus('Connection cancelled. Choose an output socket and an input socket on different nodes.');
+      this.renderHardwareGraph();
+      return;
+    }
+    const from = first.kind === 'out' ? first : clicked;
+    const to = first.kind === 'in' ? first : clicked;
+    this.connectRoutingPorts(from, to);
+  }
+
+  connectRoutingPorts(from, to) {
+    this.routingConnections = this.routingConnections
+      .filter(connection => connection.to !== to.portId && !(connection.from === from.portId && connection.to === to.portId));
+    const connection = {
+      id: `wire_${String(this.routingConnectionCounter).padStart(3, '0')}`,
+      from: from.portId,
+      to: to.portId,
+      fromNodeId: from.nodeId,
+      toNodeId: to.nodeId,
+      type: 'manual'
+    };
+    this.routingConnectionCounter += 1;
+    this.routingConnections.push(connection);
+    this.selectedRoutingConnectionId = connection.id;
+    this.updateStatus(`Connected ${connection.from} -> ${connection.to}.`);
+    this.renderHardwareGraph();
+  }
+
+  disconnectRoutingConnection(connectionId) {
+    const connection = this.routingConnections.find(item => item.id === connectionId);
+    this.routingConnections = this.routingConnections.filter(item => item.id !== connectionId);
+    this.selectedRoutingConnectionId = null;
+    this.updateStatus(connection ? `Disconnected ${connection.from} -> ${connection.to}.` : 'Disconnected wire.');
+    this.renderHardwareGraph();
+  }
+
+  disconnectRoutingPort(portId) {
+    const before = this.routingConnections.length;
+    this.routingConnections = this.routingConnections.filter(connection => connection.from !== portId && connection.to !== portId);
+    this.pendingRoutingPort = null;
+    this.selectedRoutingConnectionId = null;
+    const removed = before - this.routingConnections.length;
+    this.updateStatus(removed ? `Disconnected ${removed} wire(s) from ${portId}.` : `No wires connected to ${portId}.`);
+    this.renderHardwareGraph();
+  }
+
   createRoutingInspector() {
     const node = this.routingNodes.find(entry => entry.id === this.selectedRoutingNodeId) ?? this.routingNodes[0];
+    const selectedConnection = this.routingConnections?.find(connection => connection.id === this.selectedRoutingConnectionId);
     const inspector = document.createElement('aside');
     inspector.className = 'routing-inspector';
     const heading = document.createElement('h4');
     heading.textContent = node ? node.title : 'Inspector';
     inspector.append(heading);
+    if (selectedConnection) {
+      const wirePanel = document.createElement('div');
+      wirePanel.className = 'routing-inspector-note selected-wire-panel';
+      wirePanel.textContent = `Selected wire: ${selectedConnection.from} -> ${selectedConnection.to}`;
+      const disconnectButton = document.createElement('button');
+      disconnectButton.type = 'button';
+      disconnectButton.className = 'routing-disconnect-btn';
+      disconnectButton.textContent = 'Disconnect wire';
+      disconnectButton.addEventListener('click', () => this.disconnectRoutingConnection(selectedConnection.id));
+      wirePanel.append(disconnectButton);
+      inspector.append(wirePanel);
+    }
     if (!node) {
       return inspector;
     }
@@ -661,7 +777,7 @@ export class AuralisatorAudioEngine {
     svg.replaceChildren();
     const surfaceRect = surface.getBoundingClientRect();
     svg.setAttribute('viewBox', `0 0 ${surfaceRect.width} ${surfaceRect.height}`);
-    for (const connection of flattenHardwareConnections(this.appScene.hardware)) {
+    for (const connection of this.routingConnections ?? []) {
       const from = findRoutingPort(surface, connection.from, 'out');
       const to = findRoutingPort(surface, connection.to, 'in');
       if (!from || !to) continue;
@@ -670,9 +786,33 @@ export class AuralisatorAudioEngine {
       const b = centerRelativeTo(to, surfaceRect);
       const mid = Math.max(60, Math.abs(b.x - a.x) * 0.45);
       path.setAttribute('d', `M ${a.x} ${a.y} C ${a.x + mid} ${a.y}, ${b.x - mid} ${b.y}, ${b.x} ${b.y}`);
-      path.setAttribute('class', `routing-wire ${connection.type}`);
+      path.dataset.connectionId = connection.id;
+      path.setAttribute('class', `routing-wire ${connection.type}${connection.id === this.selectedRoutingConnectionId ? ' selected' : ''}`);
+      path.addEventListener('click', event => {
+        event.stopPropagation();
+        this.selectedRoutingConnectionId = connection.id;
+        this.pendingRoutingPort = null;
+        this.updateStatus(`Selected wire ${connection.from} -> ${connection.to}. Press Delete or double-click to disconnect.`);
+        this.renderHardwareGraph();
+      });
+      path.addEventListener('dblclick', event => {
+        event.stopPropagation();
+        this.disconnectRoutingConnection(connection.id);
+      });
       svg.append(path);
     }
+    this.markPendingRoutingPort(surface);
+  }
+
+  markPendingRoutingPort(surface) {
+    for (const port of surface.querySelectorAll('.node-port.pending-connect')) {
+      port.classList.remove('pending-connect');
+    }
+    if (!this.pendingRoutingPort) {
+      return;
+    }
+    const selector = `.node-port[data-port="${CSS.escape(this.pendingRoutingPort.portId)}"][data-kind="${this.pendingRoutingPort.kind}"]`;
+    surface.querySelector(selector)?.classList.add('pending-connect');
   }
 
   updateFileTimeUi() {
@@ -802,6 +942,13 @@ function createInitialRoutingNodes(graph, speakers) {
     y += 180;
   }
   return nodes;
+}
+
+function createInitialRoutingConnections(graph) {
+  return flattenHardwareConnections(graph).map((connection, index) => ({
+    ...connection,
+    id: `wire_${String(index + 1).padStart(3, '0')}`
+  }));
 }
 
 function renderNodeBody(node) {
