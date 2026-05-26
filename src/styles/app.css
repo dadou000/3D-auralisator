@@ -167,6 +167,30 @@ button[aria-pressed="true"] {
   display: none;
 }
 
+body.routing-fullscreen .app-shell {
+  grid-template-columns: 1fr;
+}
+
+body.routing-fullscreen .viewport {
+  display: none;
+}
+
+body.routing-fullscreen .side-panel {
+  width: 100vw;
+  height: 100vh;
+  padding: 16px;
+  border-left: 0;
+}
+
+body.routing-fullscreen .side-panel > .panel-section:first-child {
+  display: none;
+}
+
+body.routing-fullscreen [data-tab-panel="routing"] {
+  min-height: 0;
+  flex: 1;
+}
+
 .panel-section h2,
 .panel-section h3 {
   margin: 0;
@@ -345,79 +369,275 @@ input:disabled {
   color: #d6e8ec;
 }
 
+.node-editor,
+.routing-workspace {
+  min-height: 0;
+}
+
 .node-editor {
-  display: grid;
-  gap: 10px;
-  overflow-x: auto;
+  display: block;
+  height: min(660px, calc(100vh - 150px));
 }
 
-.node-canvas {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(150px, 1fr));
-  gap: 10px;
-  min-width: max-content;
-  padding-bottom: 4px;
+body.routing-fullscreen .node-editor {
+  flex: 1;
+  height: calc(100vh - 175px);
+  min-height: 420px;
 }
 
-.node-column {
+.routing-workspace {
   display: grid;
-  align-content: start;
-  gap: 8px;
+  grid-template-columns: 190px minmax(0, 1fr) 260px;
+  gap: 12px;
+  height: 100%;
 }
 
-.node-column h4 {
-  margin: 0;
+.routing-toolbox,
+.routing-inspector {
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: #121b1f;
+}
+
+.routing-toolbox h4,
+.routing-inspector h4 {
+  margin: 0 0 10px;
   color: #8eb4bd;
-  font-size: 11px;
-  font-weight: 700;
+  font-size: 12px;
   text-transform: uppercase;
 }
 
-.node-card {
+.toolbox-item {
   display: grid;
-  gap: 8px;
-  min-width: 150px;
+  grid-template-columns: 26px minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  gap: 2px 8px;
+  width: 100%;
+  height: auto;
+  min-height: 56px;
+  margin-bottom: 8px;
   padding: 9px;
-  border: 1px solid rgba(81, 210, 242, 0.24);
-  border-radius: 8px;
-  background: #152128;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.025);
+  text-align: left;
 }
 
-.node-card-header {
-  display: grid;
-  gap: 2px;
+.toolbox-item .object-icon {
+  grid-row: 1 / 3;
 }
 
-.node-card-header strong {
-  color: #e4f8ff;
-  font-size: 12px;
+.toolbox-item strong,
+.toolbox-item small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.node-card-header span {
-  color: #91aab1;
+.toolbox-item small,
+.routing-node-face small,
+.routing-inspector p {
+  color: #8ea5ac;
   font-size: 11px;
 }
 
-.node-block-stack,
-.node-ports,
-.connection-list {
+.routing-surface {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid rgba(81, 210, 242, 0.18);
+  border-radius: 8px;
+  background:
+    linear-gradient(rgba(81, 210, 242, 0.055) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(81, 210, 242, 0.055) 1px, transparent 1px),
+    #071012;
+  background-size: 36px 36px;
+}
+
+.routing-wires {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.routing-wire {
+  fill: none;
+  stroke: #51d2f2;
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  opacity: 0.72;
+}
+
+.routing-wire.mix-to-dsp {
+  stroke: #5fd9ff;
+}
+
+.routing-wire.dsp-chain {
+  stroke: #f4b24d;
+}
+
+.routing-wire.dsp-to-amp,
+.routing-wire.amp-to-speaker {
+  stroke: #9ef08e;
+}
+
+.routing-node {
+  position: absolute;
+  display: grid;
+  gap: 8px;
+  width: 176px;
+  padding: 10px;
+  border: 1px solid rgba(81, 210, 242, 0.25);
+  border-radius: 8px;
+  background: #16242a;
+  box-shadow: 0 12px 22px rgba(0, 0, 0, 0.24), inset 0 0 0 1px rgba(255, 255, 255, 0.025);
+  cursor: grab;
+  user-select: none;
+}
+
+.routing-node.selected {
+  border-color: #67dbff;
+  box-shadow: 0 0 0 2px rgba(81, 210, 242, 0.18), 0 12px 22px rgba(0, 0, 0, 0.28);
+}
+
+.routing-node:active {
+  cursor: grabbing;
+}
+
+.routing-node-face {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+}
+
+.routing-node-face strong {
+  display: block;
+  overflow: hidden;
+  color: #e4f8ff;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.object-icon {
+  display: inline-block;
+  width: 26px;
+  height: 26px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 50%;
+  background: #263239;
+  box-shadow: inset 0 4px 8px rgba(255, 255, 255, 0.08);
+}
+
+.object-icon.dsp,
+.object-icon.filter {
+  border-radius: 6px;
+  background: linear-gradient(#2d3f47, #10191d);
+}
+
+.object-icon.amp {
+  border-radius: 5px;
+  background: linear-gradient(90deg, #2c2f31, #121719);
+}
+
+.object-icon.speaker {
+  background: radial-gradient(circle at 50% 50%, #101417 0 28%, #65d8f2 30% 43%, #101417 46% 100%);
+}
+
+.object-icon.mix,
+.object-icon.input {
+  background: linear-gradient(135deg, #51d2f2, #263239);
+}
+
+.routing-node-body {
+  min-height: 34px;
+}
+
+.rack-strip,
+.filter-face,
+.meter-face,
+.amp-face,
+.speaker-face {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 34px;
+  padding: 5px;
+  border-radius: 6px;
+  background: #0c1417;
+}
+
+.rack-strip span {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 0;
+  border-radius: 4px;
+  background: #17252a;
+  color: #bcecf5;
+  font-size: 9px;
+  text-align: center;
+}
+
+.filter-face span,
+.meter-face span,
+.amp-face i,
+.speaker-face i {
+  display: block;
+  border-radius: 50%;
+  background: #51d2f2;
+}
+
+.filter-face span {
+  flex: 1;
+  height: 5px;
+  border-radius: 5px;
+}
+
+.meter-face span {
+  width: 9px;
+  height: 22px;
+}
+
+.amp-face i {
+  width: 12px;
+  height: 12px;
+}
+
+.amp-face b {
+  flex: 1;
+  height: 5px;
+  border-radius: 5px;
+  background: #f4b24d;
+}
+
+.speaker-face i {
+  width: 25px;
+  height: 25px;
+  background: radial-gradient(circle, #65d8f2 0 35%, #101417 38% 100%);
+}
+
+.speaker-face b {
+  width: 9px;
+  height: 26px;
+  border-radius: 4px;
+  background: #263239;
+}
+
+.routing-node-ports,
+.routing-inspector-ports {
   display: grid;
   gap: 5px;
 }
 
-.node-block-stack span,
 .node-port,
-.connection-item {
+.routing-inspector-ports span {
   padding: 5px 7px;
   border-radius: 6px;
   background: #0d1519;
-  font-size: 12px;
-}
-
-.node-port {
-  position: relative;
   color: #d6e8ec;
+  font-size: 12px;
 }
 
 .node-port::before {
@@ -434,13 +654,14 @@ input:disabled {
   background: #f4b24d;
 }
 
-.connection-list {
-  grid-template-columns: 1fr;
-}
-
-.connection-item {
-  color: #83d9ef;
-  border: 1px solid rgba(81, 210, 242, 0.12);
+.routing-inspector-note {
+  margin-bottom: 10px;
+  padding: 9px;
+  border: 1px solid rgba(81, 210, 242, 0.14);
+  border-radius: 8px;
+  background: #0c1417;
+  color: #bdd1d6;
+  font-size: 12px;
 }
 
 .dsp-grid {

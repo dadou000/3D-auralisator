@@ -1,6 +1,6 @@
 import { createDefaultAuralisatorScene, summarizeScene } from './app/default-scene.js';
-import { AuralisatorAudioEngine } from './audio/audio-engine.js';
-import { BabylonAuralisatorRenderer } from './renderers/babylon/babylon-renderer.js?v=geom1';
+import { AuralisatorAudioEngine } from './audio/audio-engine.js?v=polish6';
+import { BabylonAuralisatorRenderer } from './renderers/babylon/babylon-renderer.js?v=polish6';
 
 const appScene = createDefaultAuralisatorScene();
 const summary = summarizeScene(appScene);
@@ -48,6 +48,7 @@ const renderer = new BabylonAuralisatorRenderer({
   }
 });
 window.__auralisatorToggleFpv = () => renderer.toggleFpvMode();
+window.__auralisatorExitFpv = () => renderer.exitFpvMode();
 
 document.getElementById('sceneStats').textContent = [
   `${summary.speakers} speakers`,
@@ -109,6 +110,11 @@ function initSideTabs() {
       for (const panel of panels) {
         panel.hidden = panel.dataset.tabPanel !== target;
       }
+      document.body.classList.toggle('routing-fullscreen', target === 'routing');
+      if (target === 'routing') {
+        window.__auralisatorExitFpv?.();
+      }
+      window.dispatchEvent(new Event('resize'));
     });
   }
 }

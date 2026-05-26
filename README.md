@@ -18,9 +18,9 @@ The Babylon shell includes a probe editor for switching between 2D/3D preview gr
 
 It also includes a first live audio input layer: browser line-in capture, local audio file playback with seeking, line/file mixing, master gain, and per-speaker routing to the current speaker positions.
 
-The signal chain is now modeled as hardware in its own Routing tab: Mix Out L/R feeds a SigmaStudio-style DSP block, DSP outputs feed stereo amp channels, and amp channels feed the current speakers.
+The signal chain is now modeled as hardware in its own full-screen Routing workspace: Mix Out L/R feeds a SigmaStudio-style DSP block, DSP outputs feed stereo amp channels, and amp channels feed the current speakers. The workspace supports toolbox-created draggable modules for laying out inputs, DSP/filter stages, amps, and speakers.
 
-FPV mode lets the listener walk the room with WASD and mouse look while the Web Audio listener follows the camera.
+FPV mode uses a dedicated player camera so the listener can walk the room with WASD and mouse look while the Web Audio listener follows the camera.
 
 The Objects tab adds movable walls, speakers, listener, imported GLB/embedded glTF geometry, and a Blender 4.x+ exporter for converting Blender/FBX scenes to app-ready GLB files. The Runtime tab also has the first preview baked-field solver pass with direct probe response, sparse first-order reflections, late-field summaries, low-frequency complex pressure bins, and coarse wall occlusion checks.
 

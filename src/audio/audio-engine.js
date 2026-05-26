@@ -1,5 +1,49 @@
 import { flattenHardwareConnections } from '../hardware/hardware-model.js';
 
+const ROUTING_TOOLBOX = Object.freeze([
+  {
+    type: 'input',
+    title: 'Input',
+    meta: 'Line or file source',
+    ports: [{ id: 'out_l', label: 'out L', kind: 'out' }, { id: 'out_r', label: 'out R', kind: 'out' }]
+  },
+  {
+    type: 'mix',
+    title: 'Mix Output',
+    meta: 'Stereo bus',
+    ports: [{ id: 'mix_l', label: 'mix_l', kind: 'out' }, { id: 'mix_r', label: 'mix_r', kind: 'out' }]
+  },
+  {
+    type: 'dsp',
+    title: 'DSP',
+    meta: 'Sigma-style processor',
+    ports: [
+      { id: 'dsp_in_l', label: 'dsp_in_l', kind: 'in' },
+      { id: 'dsp_in_r', label: 'dsp_in_r', kind: 'in' },
+      { id: 'dsp_out_l', label: 'dsp_out_l', kind: 'out' },
+      { id: 'dsp_out_r', label: 'dsp_out_r', kind: 'out' }
+    ]
+  },
+  {
+    type: 'filter',
+    title: 'Filter',
+    meta: 'HPF / PEQ / LPF',
+    ports: [{ id: 'in', label: 'in', kind: 'in' }, { id: 'out', label: 'out', kind: 'out' }]
+  },
+  {
+    type: 'amp',
+    title: 'Amplifier',
+    meta: 'Power amp channel',
+    ports: [{ id: 'in', label: 'in', kind: 'in' }, { id: 'out', label: 'speaker out', kind: 'out' }]
+  },
+  {
+    type: 'speaker',
+    title: 'Speaker',
+    meta: 'Room speaker',
+    ports: [{ id: 'in', label: 'speaker in', kind: 'in' }]
+  }
+]);
+
 export class AuralisatorAudioEngine {
   constructor({ appScene, controls = {}, statusEl } = {}) {
     this.appScene = appScene;
@@ -21,6 +65,9 @@ export class AuralisatorAudioEngine {
     this.dspRoutes = new Map();
     this.fileObjectUrl = null;
     this.lineEnabled = false;
+    this.routingNodeCounter = 1;
+    this.routingNodes = null;
+    this.selectedRoutingNodeId = null;
   }
 
   bind() {
@@ -413,56 +460,187 @@ export class AuralisatorAudioEngine {
     }
     const graph = this.appScene.hardware;
     this.controls.hardwareGraph.replaceChildren();
-    const canvas = document.createElement('div');
-    canvas.className = 'node-canvas';
-
-    canvas.append(createNodeColumn('Mix outputs', graph.mixOutputs.map(output => ({
-      id: output.id,
-      title: output.name,
-      meta: `${output.channel} bus`,
-      ports: [{ label: output.id, kind: 'out' }]
-    }))));
-
-    canvas.append(createNodeColumn('DSP', [{
-      id: graph.dsp.id,
-      title: graph.dsp.name,
-      meta: 'Sigma-style processing',
-      ports: [
-        ...graph.dsp.inputs.map(input => ({ label: input.id, kind: 'in' })),
-        ...graph.dsp.outputs.map(output => ({ label: output.id, kind: 'out' }))
-      ],
-      blocks: ['Input Gain', 'HPF', 'PEQ', 'LPF', 'Delay', 'Output Gain']
-    }]));
-
-    canvas.append(createNodeColumn('Amplifiers', graph.amps.flatMap(amp => amp.channels.map(channel => ({
-      id: channel.id,
-      title: channel.name,
-      meta: amp.name,
-      ports: [
-        { label: channel.input, kind: 'in' },
-        { label: channel.speakerId ?? 'unassigned', kind: 'out' }
-      ]
-    })))));
-
-    canvas.append(createNodeColumn('Speakers', this.appScene.speakers.map(speaker => ({
-      id: speaker.id,
-      title: speaker.name,
-      meta: speaker.id,
-      ports: [{ label: speaker.id, kind: 'in' }]
-    }))));
-
-    const connectionList = document.createElement('div');
-    connectionList.className = 'connection-list';
-    for (const connection of flattenHardwareConnections(graph)) {
-      const item = document.createElement('div');
-      item.className = `connection-item ${connection.type}`;
-      item.textContent = `${connection.from} -> ${connection.to}`;
-      connectionList.append(item);
+    if (!this.routingNodes) {
+      this.routingNodes = createInitialRoutingNodes(graph, this.appScene.speakers);
+      this.selectedRoutingNodeId = graph.dsp.id;
     }
 
-    this.controls.hardwareGraph.append(canvas, connectionList);
+    const workspace = document.createElement('div');
+    workspace.className = 'routing-workspace';
+    const toolbox = this.createRoutingToolbox();
+    const surface = document.createElement('div');
+    surface.className = 'routing-surface';
+    surface.addEventListener('dragover', event => event.preventDefault());
+    surface.addEventListener('drop', event => {
+      event.preventDefault();
+      const type = event.dataTransfer?.getData('application/x-auralisator-node');
+      if (!type) return;
+      const rect = surface.getBoundingClientRect();
+      this.addRoutingNode(type, event.clientX - rect.left, event.clientY - rect.top);
+    });
+
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.classList.add('routing-wires');
+    surface.append(svg);
+    for (const node of this.routingNodes) {
+      surface.append(this.createRoutingNodeCard(node, surface));
+    }
+
+    const inspector = this.createRoutingInspector();
+    workspace.append(toolbox, surface, inspector);
+    this.controls.hardwareGraph.append(workspace);
+    requestAnimationFrame(() => this.renderRoutingWires(surface, svg));
     if (this.controls.dspSummary) {
-      this.controls.dspSummary.textContent = `${graph.dsp.name}: ${graph.mixOutputs.length} mix outs, ${graph.dsp.outputs.length} DSP outs, ${graph.amps.length} amp`;
+      this.controls.dspSummary.textContent = `${graph.dsp.name}: drag modules from the toolbox, select DSP/filter nodes to edit processing.`;
+    }
+  }
+
+  createRoutingToolbox() {
+    const toolbox = document.createElement('aside');
+    toolbox.className = 'routing-toolbox';
+    const title = document.createElement('h4');
+    title.textContent = 'Toolbox';
+    toolbox.append(title);
+    for (const item of ROUTING_TOOLBOX) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'toolbox-item';
+      button.draggable = true;
+      button.dataset.nodeType = item.type;
+      button.innerHTML = `<span class="object-icon ${item.type}"></span><strong>${item.title}</strong><small>${item.meta}</small>`;
+      button.onclick = event => {
+        event.preventDefault();
+        this.addRoutingNode(item.type);
+      };
+      button.onkeydown = event => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          this.addRoutingNode(item.type);
+        }
+      };
+      button.addEventListener('dragstart', event => {
+        event.dataTransfer?.setData('application/x-auralisator-node', item.type);
+      });
+      toolbox.append(button);
+    }
+    return toolbox;
+  }
+
+  createRoutingNodeCard(node, surface) {
+    const card = document.createElement('article');
+    card.className = `routing-node routing-node-${node.type}`;
+    card.dataset.nodeId = node.id;
+    card.style.left = `${node.x}px`;
+    card.style.top = `${node.y}px`;
+    if (node.id === this.selectedRoutingNodeId) {
+      card.classList.add('selected');
+    }
+    card.innerHTML = `
+      <div class="routing-node-face">
+        <span class="object-icon ${node.type}"></span>
+        <div><strong>${node.title}</strong><small>${node.meta}</small></div>
+      </div>
+      <div class="routing-node-body">${renderNodeBody(node)}</div>
+      <div class="routing-node-ports">
+        ${node.ports.map(port => `<span class="node-port ${port.kind}" data-port="${port.id}">${port.label}</span>`).join('')}
+      </div>
+    `;
+    card.addEventListener('click', event => {
+      event.stopPropagation();
+      this.selectedRoutingNodeId = node.id;
+      this.renderHardwareGraph();
+    });
+    card.addEventListener('pointerdown', event => this.beginRoutingDrag(event, node, card, surface));
+    return card;
+  }
+
+  beginRoutingDrag(event, node, card, surface) {
+    if (event.button !== 0) return;
+    const rect = surface.getBoundingClientRect();
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const originalX = node.x;
+    const originalY = node.y;
+    card.setPointerCapture?.(event.pointerId);
+    const move = moveEvent => {
+      node.x = clampNumber(originalX + moveEvent.clientX - startX, 12, rect.width - 190, originalX);
+      node.y = clampNumber(originalY + moveEvent.clientY - startY, 12, rect.height - 130, originalY);
+      card.style.left = `${node.x}px`;
+      card.style.top = `${node.y}px`;
+      const svg = surface.querySelector('.routing-wires');
+      this.renderRoutingWires(surface, svg);
+    };
+    const end = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', end);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', end);
+  }
+
+  addRoutingNode(type, x = 56, y = 56) {
+    const template = ROUTING_TOOLBOX.find(item => item.type === type) ?? ROUTING_TOOLBOX[0];
+    const id = `${type}_${String(this.routingNodeCounter).padStart(2, '0')}`;
+    this.routingNodeCounter += 1;
+    this.routingNodes.push({
+      id,
+      type,
+      title: template.title,
+      meta: template.meta,
+      x: Math.round(x),
+      y: Math.round(y),
+      ports: template.ports.map(port => ({ ...port, id: `${id}_${port.id}` }))
+    });
+    this.selectedRoutingNodeId = id;
+    this.renderHardwareGraph();
+  }
+
+  createRoutingInspector() {
+    const node = this.routingNodes.find(entry => entry.id === this.selectedRoutingNodeId) ?? this.routingNodes[0];
+    const inspector = document.createElement('aside');
+    inspector.className = 'routing-inspector';
+    const heading = document.createElement('h4');
+    heading.textContent = node ? node.title : 'Inspector';
+    inspector.append(heading);
+    if (!node) {
+      return inspector;
+    }
+    const meta = document.createElement('p');
+    meta.textContent = node.meta;
+    inspector.append(meta);
+    if (node.type === 'dsp' || node.type === 'filter') {
+      const hint = document.createElement('div');
+      hint.className = 'routing-inspector-note';
+      hint.textContent = 'DSP controls below edit the active hardware chain: input gain, HPF, PEQ, LPF, delay, and output gain.';
+      inspector.append(hint);
+    }
+    const ports = document.createElement('div');
+    ports.className = 'routing-inspector-ports';
+    for (const port of node.ports) {
+      const item = document.createElement('span');
+      item.textContent = `${port.kind.toUpperCase()} ${port.label}`;
+      ports.append(item);
+    }
+    inspector.append(ports);
+    return inspector;
+  }
+
+  renderRoutingWires(surface, svg) {
+    if (!surface || !svg) return;
+    svg.replaceChildren();
+    const surfaceRect = surface.getBoundingClientRect();
+    svg.setAttribute('viewBox', `0 0 ${surfaceRect.width} ${surfaceRect.height}`);
+    for (const connection of flattenHardwareConnections(this.appScene.hardware)) {
+      const from = findRoutingPort(surface, connection.from, 'out');
+      const to = findRoutingPort(surface, connection.to, 'in');
+      if (!from || !to) continue;
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      const a = centerRelativeTo(from, surfaceRect);
+      const b = centerRelativeTo(to, surfaceRect);
+      const mid = Math.max(60, Math.abs(b.x - a.x) * 0.45);
+      path.setAttribute('d', `M ${a.x} ${a.y} C ${a.x + mid} ${a.y}, ${b.x - mid} ${b.y}, ${b.x} ${b.y}`);
+      path.setAttribute('class', `routing-wire ${connection.type}`);
+      svg.append(path);
     }
   }
 
@@ -524,6 +702,113 @@ function findAmpChannelForSpeaker(graph, speakerId) {
     }
   }
   return null;
+}
+
+function createInitialRoutingNodes(graph, speakers) {
+  const nodes = [
+    {
+      id: 'sources',
+      type: 'input',
+      title: 'Computer Inputs',
+      meta: 'Line-in + local player',
+      x: 40,
+      y: 70,
+      ports: [{ id: 'source_l', label: 'L', kind: 'out' }, { id: 'source_r', label: 'R', kind: 'out' }]
+    },
+    {
+      id: 'mix_bus',
+      type: 'mix',
+      title: 'Mix Out L/R',
+      meta: 'real stereo mix bus',
+      x: 290,
+      y: 80,
+      ports: graph.mixOutputs.map(output => ({ id: output.id, label: output.id, kind: 'out' }))
+    },
+    {
+      id: graph.dsp.id,
+      type: 'dsp',
+      title: graph.dsp.name,
+      meta: 'click to edit filters',
+      x: 560,
+      y: 60,
+      ports: [
+        ...graph.dsp.inputs.map(input => ({ id: input.id, label: input.id, kind: 'in' })),
+        ...graph.dsp.outputs.map(output => ({ id: output.id, label: output.id, kind: 'out' }))
+      ]
+    }
+  ];
+
+  let y = 72;
+  for (const amp of graph.amps) {
+    for (const channel of amp.channels) {
+      nodes.push({
+        id: channel.id,
+        type: 'amp',
+        title: channel.name,
+        meta: `${amp.name} / ${amp.maxWattsPerChannel} W`,
+        x: 860,
+        y,
+        ports: [
+          { id: channel.id, label: channel.input, kind: 'in' },
+          { id: channel.id, label: channel.id, kind: 'out' }
+        ]
+      });
+      y += 180;
+    }
+  }
+
+  y = 72;
+  for (const speaker of speakers) {
+    nodes.push({
+      id: speaker.id,
+      type: 'speaker',
+      title: speaker.name,
+      meta: speaker.id,
+      x: 1120,
+      y,
+      ports: [{ id: speaker.id, label: speaker.id, kind: 'in' }]
+    });
+    y += 180;
+  }
+  return nodes;
+}
+
+function renderNodeBody(node) {
+  if (node.type === 'dsp') {
+    return '<div class="rack-strip"><span>IN</span><span>HPF</span><span>PEQ</span><span>LPF</span><span>DLY</span><span>OUT</span></div>';
+  }
+  if (node.type === 'amp') {
+    return '<div class="amp-face"><i></i><i></i><b></b></div>';
+  }
+  if (node.type === 'speaker') {
+    return '<div class="speaker-face"><i></i><b></b></div>';
+  }
+  if (node.type === 'filter') {
+    return '<div class="filter-face"><span></span><span></span><span></span></div>';
+  }
+  return '<div class="meter-face"><span></span><span></span></div>';
+}
+
+function findRoutingPort(surface, portId, preferredKind) {
+  const exact = surface.querySelector(`[data-port="${CSS.escape(portId)}"].${preferredKind}`);
+  if (exact) return exact;
+  return surface.querySelector(`[data-port="${CSS.escape(portId)}"]`);
+}
+
+function centerRelativeTo(element, containerRect) {
+  const rect = element.getBoundingClientRect();
+  return {
+    x: rect.left - containerRect.left + rect.width / 2,
+    y: rect.top - containerRect.top + rect.height / 2
+  };
+}
+
+function clampNumber(value, min, max, fallback) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return fallback;
+  }
+  return Math.min(max, Math.max(min, number));
 }
 
 function createNodeColumn(title, nodes) {

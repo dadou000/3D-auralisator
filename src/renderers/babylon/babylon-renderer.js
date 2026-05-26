@@ -44,7 +44,12 @@ export class BabylonAuralisatorRenderer {
     this.engine = null;
     this.scene = null;
     this.appScene = null;
+    this.orbitCamera = null;
+    this.playerCamera = null;
     this.probeMeshes = [];
+    this.probeSourceMesh = null;
+    this.thinProbeIds = [];
+    this.thinProbeMatrices = [];
     this.probeById = new Map();
     this.probesVisible = true;
     this.previewBake = null;
@@ -137,6 +142,7 @@ export class BabylonAuralisatorRenderer {
     camera.panningSensibility = 80;
     camera.attachControl(this.canvas, true);
     this.camera = camera;
+    this.orbitCamera = camera;
   }
 
   createLights() {
@@ -316,15 +322,45 @@ export class BabylonAuralisatorRenderer {
 
   renderProbeMeshes() {
     this.detachSelectedProbe();
+    if (this.probeSourceMesh) {
+      this.probeSourceMesh.dispose();
+      this.probeSourceMesh = null;
+    }
     for (const mesh of this.probeMeshes) {
       mesh.dispose();
     }
     this.probeMeshes = [];
+    this.thinProbeIds = [];
+    this.thinProbeMatrices = [];
     this.probeById.clear();
 
-    for (const probe of this.previewBake.probes) {
-      this.createProbeMesh(probe);
+    const automaticProbes = this.previewBake.probes.filter(probe => !probe.manual);
+    if (automaticProbes.length) {
+      this.createProbeThinInstances(automaticProbes);
     }
+    for (const probe of this.previewBake.probes) {
+      if (probe.manual) {
+        this.createProbeMesh(probe);
+      }
+    }
+  }
+
+  createProbeThinInstances(probes) {
+    const source = BABYLON.MeshBuilder.CreateSphere('probe_instance_source', { diameter: 0.18, segments: 10 }, this.scene);
+    source.material = this.materials.probe;
+    source.isPickable = true;
+    source.isVisible = this.probesVisible;
+    source.metadata = { type: 'probeCloud' };
+    source.thinInstanceEnablePicking = true;
+
+    for (const probe of probes) {
+      const matrix = BABYLON.Matrix.Translation(probe.position[0], probe.position[1], probe.position[2]);
+      source.thinInstanceAdd(matrix);
+      this.thinProbeIds.push(probe.id);
+      this.thinProbeMatrices.push(matrix.clone());
+      this.probeById.set(probe.id, source);
+    }
+    this.probeSourceMesh = source;
   }
 
   createProbeMesh(probe) {
@@ -401,7 +437,9 @@ export class BabylonAuralisatorRenderer {
   }
 
   addManualProbe() {
-    const target = this.camera?.target ?? new BABYLON.Vector3(0, this.appScene.acoustic.previewProbePlaneY, 0);
+    const target = this.camera?.target
+      ?? this.camera?.getTarget?.()
+      ?? BABYLON.Vector3.FromArray(this.appScene.listener.position);
     const position = [
       clamp(target.x, this.appScene.bounds.min[0], this.appScene.bounds.max[0]),
       clamp(this.appScene.listener.position[1], this.appScene.bounds.min[1], this.appScene.bounds.max[1]),
@@ -431,6 +469,7 @@ export class BabylonAuralisatorRenderer {
     this.probeMeshes = this.probeMeshes.filter(mesh => mesh !== this.selectedProbe);
     this.probeById.delete(probe.id);
     this.detachSelectedProbe();
+    this.renderProbeMeshes();
     this.rebuildSampler();
     this.updateProbeControls();
     this.setStatus(`Deleted ${probe.id}.`);
@@ -628,9 +667,13 @@ export class BabylonAuralisatorRenderer {
       return;
     }
     if (this.selectedProbe && this.selectedProbe.metadata?.probe) {
-      this.selectedProbe.material = this.selectedProbe.metadata.probe.manual
-        ? this.materials.manualProbe
-        : this.materials.probe;
+      if (this.selectedProbe.metadata.helper) {
+        this.selectedProbe.dispose();
+      } else {
+        this.selectedProbe.material = this.selectedProbe.metadata.probe.manual
+          ? this.materials.manualProbe
+          : this.materials.probe;
+      }
     }
     this.selectedProbe = mesh;
     this.selectedProbe.material = this.materials.selectedProbe;
@@ -639,11 +682,33 @@ export class BabylonAuralisatorRenderer {
     this.setStatus(`${mesh.metadata.probe.id} selected. Move it with the gizmo or numeric fields.`);
   }
 
+  selectThinProbe(thinInstanceIndex) {
+    if (thinInstanceIndex < 0) {
+      return;
+    }
+    const probeId = this.thinProbeIds[thinInstanceIndex];
+    const probe = this.previewBake?.probes.find(entry => entry.id === probeId);
+    if (!probe) {
+      return;
+    }
+    const helper = BABYLON.MeshBuilder.CreateSphere(`editor_${probe.id}`, { diameter: 0.24, segments: 14 }, this.scene);
+    helper.position = BABYLON.Vector3.FromArray(probe.position);
+    helper.material = this.materials.selectedProbe;
+    helper.isVisible = this.probesVisible;
+    helper.isPickable = true;
+    helper.metadata = { type: 'probe', probe, helper: true, thinInstanceIndex };
+    this.selectProbe(helper);
+  }
+
   detachSelectedProbe() {
     if (this.selectedProbe && !this.selectedProbe.isDisposed()) {
-      this.selectedProbe.material = this.selectedProbe.metadata?.probe?.manual
-        ? this.materials.manualProbe
-        : this.materials.probe;
+      if (this.selectedProbe.metadata?.helper) {
+        this.selectedProbe.dispose();
+      } else {
+        this.selectedProbe.material = this.selectedProbe.metadata?.probe?.manual
+          ? this.materials.manualProbe
+          : this.materials.probe;
+      }
     }
     this.selectedProbe = null;
     this.gizmoManager?.attachToMesh(null);
@@ -665,6 +730,13 @@ export class BabylonAuralisatorRenderer {
       round3(this.selectedProbe.position.y),
       round3(this.selectedProbe.position.z)
     ];
+    if (this.selectedProbe.metadata.helper && this.probeSourceMesh) {
+      const index = this.selectedProbe.metadata.thinInstanceIndex;
+      const matrix = BABYLON.Matrix.Translation(probe.position[0], probe.position[1], probe.position[2]);
+      this.thinProbeMatrices[index] = matrix;
+      this.probeSourceMesh.thinInstanceSetMatrixAt(index, matrix);
+      this.probeSourceMesh.thinInstanceBufferUpdated('matrix');
+    }
     this.updateProbeControls();
   }
 
@@ -729,9 +801,15 @@ export class BabylonAuralisatorRenderer {
     this.fpv.yaw = BABYLON.Tools.ToRadians(listener.yaw ?? 0);
     this.fpv.pitch = BABYLON.Tools.ToRadians(listener.pitch ?? 0);
     this.detachSelectedProbe();
-    this.camera.detachControl(this.canvas);
-    this.camera.lowerRadiusLimit = 0.1;
-    this.camera.upperRadiusLimit = 0.1;
+    this.objectGizmoManager?.attachToNode?.(null);
+    this.orbitCamera = this.orbitCamera ?? this.camera;
+    this.orbitCamera.detachControl(this.canvas);
+    this.playerCamera = new BABYLON.UniversalCamera('fpv_player_camera', BABYLON.Vector3.FromArray(listener.position), this.scene);
+    this.playerCamera.inputs.clear();
+    this.playerCamera.minZ = 0.05;
+    this.playerCamera.speed = 0;
+    this.camera = this.playerCamera;
+    this.scene.activeCamera = this.playerCamera;
     this.fpvButton?.setAttribute('aria-pressed', 'true');
     if (this.fpvHud) this.fpvHud.hidden = false;
     this.syncCameraToListener();
@@ -749,10 +827,11 @@ export class BabylonAuralisatorRenderer {
     if (document.pointerLockElement === this.canvas) {
       document.exitPointerLock?.();
     }
-    this.camera.lowerRadiusLimit = 3;
-    this.camera.upperRadiusLimit = 60;
-    this.camera.attachControl(this.canvas, true);
-    this.camera.radius = 15;
+    this.playerCamera?.dispose();
+    this.playerCamera = null;
+    this.camera = this.orbitCamera;
+    this.scene.activeCamera = this.orbitCamera;
+    this.orbitCamera.attachControl(this.canvas, true);
     this.fpvButton?.setAttribute('aria-pressed', 'false');
     if (this.fpvHud) this.fpvHud.hidden = true;
     this.setStatus('FPV mode exited.');
@@ -805,7 +884,9 @@ export class BabylonAuralisatorRenderer {
     const position = BABYLON.Vector3.FromArray(listener.position);
     const forward = getLookForward(this.fpv.yaw, this.fpv.pitch);
     this.camera.position.copyFrom(position);
-    this.camera.target.copyFrom(position.add(forward));
+    this.camera.setTarget(position.add(forward));
+    this.camera.rotation.x = -this.fpv.pitch;
+    this.camera.rotation.y = this.fpv.yaw;
   }
 
   syncListenerVisual() {
@@ -857,6 +938,11 @@ export class BabylonAuralisatorRenderer {
       if (!this.fpv.enabled) {
         return;
       }
+      if (event.code === 'Escape') {
+        this.exitFpvMode();
+        event.preventDefault();
+        return;
+      }
       this.fpv.keys[event.code] = true;
       if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space', 'KeyQ', 'KeyE', 'KeyC', 'ShiftLeft', 'ShiftRight'].includes(event.code)) {
         event.preventDefault();
@@ -871,12 +957,16 @@ export class BabylonAuralisatorRenderer {
     document.addEventListener('mousemove', event => this.handleFpvMouseMove(event));
     document.addEventListener('pointerlockchange', () => {
       if (this.fpv.enabled && document.pointerLockElement !== this.canvas) {
-        this.exitFpvMode();
+        this.fpv.keys = Object.create(null);
+        this.setStatus('FPV mode active without pointer lock. Click the canvas for mouse look.');
       }
     });
 
     this.probeButton?.addEventListener('click', () => {
       this.probesVisible = !this.probesVisible;
+      if (this.probeSourceMesh) {
+        this.probeSourceMesh.isVisible = this.probesVisible;
+      }
       for (const mesh of this.probeMeshes) {
         mesh.isVisible = this.probesVisible;
       }
@@ -939,6 +1029,10 @@ export class BabylonAuralisatorRenderer {
       const mesh = pointerInfo.pickInfo?.pickedMesh;
       if (mesh?.metadata?.type === 'probe') {
         this.selectProbe(mesh);
+        return;
+      }
+      if (mesh?.metadata?.type === 'probeCloud') {
+        this.selectThinProbe(pointerInfo.pickInfo.thinInstanceIndex);
         return;
       }
       if (mesh?.metadata?.type === 'sceneObject') {
