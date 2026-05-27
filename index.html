@@ -257,6 +257,58 @@
         <button id="runPreviewSolverBtn" type="button">Run preview solver</button>
         <div id="solverStats" class="status solver-stats">Solver idle.</div>
 
+        <h3>Field Visualizer</h3>
+        <div class="field-grid">
+          <label class="field">
+            Product
+            <select id="fieldProduct"></select>
+          </label>
+          <label class="field">
+            Metric
+            <select id="fieldMetric"></select>
+          </label>
+        </div>
+        <div class="field-grid">
+          <label class="field">
+            Weighting
+            <select id="fieldWeighting"></select>
+          </label>
+          <label class="field">
+            Tool
+            <select id="fieldToolMode">
+              <option value="move">Move</option>
+              <option value="rotate">Rotate</option>
+              <option value="resize">Resize</option>
+            </select>
+          </label>
+        </div>
+        <div class="field-grid">
+          <label class="field">
+            Width m
+            <input id="fieldSheetWidth" type="number" min="0.5" max="50" step="0.1" value="8" />
+          </label>
+          <label class="field">
+            Height m
+            <input id="fieldSheetHeight" type="number" min="0.5" max="50" step="0.1" value="5" />
+          </label>
+        </div>
+        <div class="field-grid">
+          <label class="field">
+            Canvas X
+            <input id="fieldResolutionX" type="number" min="16" max="1024" step="16" value="128" />
+          </label>
+          <label class="field">
+            Canvas Y
+            <input id="fieldResolutionY" type="number" min="16" max="1024" step="16" value="96" />
+          </label>
+        </div>
+        <div class="button-row">
+          <button id="addFieldSheetBtn" type="button">Add sheet</button>
+          <button id="updateFieldSheetBtn" type="button" disabled>Update sheet</button>
+        </div>
+        <button id="deleteFieldSheetBtn" type="button" disabled>Delete sheet</button>
+        <div id="fieldVisualizerStats" class="status">No field sheet placed.</div>
+
         <h3>Visualization</h3>
         <div class="metric-grid">
           <div class="metric">
@@ -283,6 +335,6 @@
       </section>
     </aside>
   </main>
-  <script type="module" src="./src/main.js?v=controls-solver3"></script>
+  <script type="module" src="./src/main.js?v=field-viz2"></script>
 </body>
 </html>

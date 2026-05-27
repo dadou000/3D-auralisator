@@ -301,7 +301,8 @@ body.routing-fullscreen [data-tab-panel="routing"] {
 }
 
 .field-row,
-.button-row {
+.button-row,
+.field-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;

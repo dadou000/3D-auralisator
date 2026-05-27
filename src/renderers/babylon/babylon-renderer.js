@@ -6,6 +6,13 @@ import {
 } from '../../acoustic/bake/preview-bake.js';
 import { ProbeFieldSampler } from '../../acoustic/runtime/probe-field.js';
 import { solvePreviewAcousticField } from '../../acoustic/solver/preview-solver.js';
+import {
+  evaluateFieldMetric,
+  FIELD_METRICS,
+  FIELD_PRODUCTS,
+  FIELD_WEIGHTINGS,
+  metricUnit
+} from '../../acoustic/field-metrics.js';
 
 const MATERIAL_COLORS = Object.freeze({
   concrete: [0.55, 0.58, 0.62],
@@ -27,6 +34,7 @@ export class BabylonAuralisatorRenderer {
     onSceneObjectChange = () => {},
     objectControls = {},
     solverControls = {},
+    fieldControls = {},
     probeControls = {}
   } = {}) {
     this.canvas = canvas;
@@ -40,6 +48,7 @@ export class BabylonAuralisatorRenderer {
     this.onSceneObjectChange = onSceneObjectChange;
     this.objectControls = objectControls;
     this.solverControls = solverControls;
+    this.fieldControls = fieldControls;
     this.probeControls = probeControls;
     this.engine = null;
     this.scene = null;
@@ -59,8 +68,10 @@ export class BabylonAuralisatorRenderer {
     this.gizmoManager = null;
     this.objectGizmoManager = null;
     this.importedObjects = [];
+    this.fieldSheets = [];
     this.selectedObject = null;
     this.importCounter = 1;
+    this.fieldSheetCounter = 1;
     this.solverResult = null;
     this.listenerNode = null;
     this.fpv = {
@@ -102,6 +113,8 @@ export class BabylonAuralisatorRenderer {
     this.createObjectGizmo();
     this.bindControls();
     this.updateObjectControls();
+    this.populateFieldControls();
+    this.updateFieldSheetControls();
 
     this.engine.runRenderLoop(() => {
       this.updateFpv(this.engine.getDeltaTime() / 1000);
@@ -415,6 +428,17 @@ export class BabylonAuralisatorRenderer {
       this.syncSelectedObjectFromNode();
       this.onSceneObjectChange();
       this.updateObjectControls();
+      this.refreshSelectedFieldSheet();
+    });
+    this.objectGizmoManager.gizmos.rotationGizmo?.onDragEndObservable?.add(() => {
+      this.syncSelectedObjectFromNode();
+      this.updateFieldSheetControls();
+      this.refreshSelectedFieldSheet();
+    });
+    this.objectGizmoManager.gizmos.scaleGizmo?.onDragEndObservable?.add(() => {
+      this.syncSelectedObjectFromNode();
+      this.updateFieldSheetControls();
+      this.refreshSelectedFieldSheet();
     });
   }
 
@@ -541,6 +565,186 @@ export class BabylonAuralisatorRenderer {
     return imported;
   }
 
+  createFieldSheet() {
+    const settings = this.readFieldSheetSettings();
+    const mesh = BABYLON.MeshBuilder.CreatePlane(`field_sheet_${String(this.fieldSheetCounter).padStart(3, '0')}`, {
+      size: 1,
+      sideOrientation: BABYLON.Mesh.DOUBLESIDE
+    }, this.scene);
+    mesh.position = new BABYLON.Vector3(0, this.appScene.listener.position[1], 0);
+    mesh.rotation.x = Math.PI / 2;
+    mesh.scaling = new BABYLON.Vector3(settings.width, settings.height, 1);
+
+    const texture = new BABYLON.DynamicTexture(`${mesh.name}_texture`, {
+      width: settings.resolutionX,
+      height: settings.resolutionY
+    }, this.scene, false);
+    texture.hasAlpha = false;
+    const material = new BABYLON.StandardMaterial(`${mesh.name}_mat`, this.scene);
+    material.diffuseTexture = texture;
+    material.emissiveTexture = texture;
+    material.disableLighting = true;
+    material.backFaceCulling = false;
+    mesh.material = material;
+
+    const sheet = {
+      id: mesh.name,
+      name: `Field Sheet ${this.fieldSheetCounter}`,
+      objectType: 'fieldSheet',
+      node: mesh,
+      mesh,
+      material,
+      texture,
+      width: settings.width,
+      height: settings.height,
+      resolutionX: settings.resolutionX,
+      resolutionY: settings.resolutionY,
+      product: settings.product,
+      metric: settings.metric,
+      weighting: settings.weighting,
+      minValue: 0,
+      maxValue: 0
+    };
+    this.fieldSheetCounter += 1;
+    mesh.metadata = { type: 'sceneObject', objectType: 'fieldSheet', source: sheet, node: mesh, movable: true };
+    this.fieldSheets.push(sheet);
+    this.selectObject(mesh.metadata);
+    this.renderFieldSheet(sheet);
+    this.setStatus(`${sheet.name} created.`);
+    return sheet;
+  }
+
+  readFieldSheetSettings() {
+    return {
+      width: clampNumber(this.fieldControls.width?.value, 0.5, 50, 8),
+      height: clampNumber(this.fieldControls.height?.value, 0.5, 50, 5),
+      resolutionX: Math.round(clampNumber(this.fieldControls.resolutionX?.value, 16, 1024, 128)),
+      resolutionY: Math.round(clampNumber(this.fieldControls.resolutionY?.value, 16, 1024, 96)),
+      product: this.fieldControls.product?.value ?? 'mix',
+      metric: this.fieldControls.metric?.value ?? 'avg_spl',
+      weighting: this.fieldControls.weighting?.value ?? 'z'
+    };
+  }
+
+  applyFieldSheetControlsToSelected() {
+    const sheet = this.selectedObject?.objectType === 'fieldSheet' ? this.selectedObject.source : null;
+    if (!sheet) {
+      return;
+    }
+    const settings = this.readFieldSheetSettings();
+    sheet.width = settings.width;
+    sheet.height = settings.height;
+    sheet.resolutionX = settings.resolutionX;
+    sheet.resolutionY = settings.resolutionY;
+    sheet.product = settings.product;
+    sheet.metric = settings.metric;
+    sheet.weighting = settings.weighting;
+    sheet.mesh.scaling.x = settings.width;
+    sheet.mesh.scaling.y = settings.height;
+    this.setObjectGizmoMode(this.fieldControls.tool?.value ?? 'move');
+    this.renderFieldSheet(sheet);
+  }
+
+  refreshSelectedFieldSheet() {
+    const sheet = this.selectedObject?.objectType === 'fieldSheet' ? this.selectedObject.source : null;
+    if (sheet) {
+      this.syncFieldSheetFromMesh(sheet);
+      this.renderFieldSheet(sheet);
+    }
+  }
+
+  syncFieldSheetFromMesh(sheet) {
+    sheet.width = round3(Math.abs(sheet.mesh.scaling.x));
+    sheet.height = round3(Math.abs(sheet.mesh.scaling.y));
+    sheet.position = [round3(sheet.mesh.position.x), round3(sheet.mesh.position.y), round3(sheet.mesh.position.z)];
+    sheet.rotation = [round3(sheet.mesh.rotation.x), round3(sheet.mesh.rotation.y), round3(sheet.mesh.rotation.z)];
+    this.updateFieldSheetControls();
+  }
+
+  renderFieldSheet(sheet) {
+    if (!sheet?.mesh) {
+      return;
+    }
+    if (!this.solverResult) {
+      this.runPreviewSolver();
+    }
+    if (!this.solverResult?.sourceBakes?.length) {
+      return;
+    }
+    if (sheet.texture.getSize().width !== sheet.resolutionX || sheet.texture.getSize().height !== sheet.resolutionY) {
+      sheet.texture.dispose();
+      sheet.texture = new BABYLON.DynamicTexture(`${sheet.id}_texture_${sheet.resolutionX}x${sheet.resolutionY}`, {
+        width: sheet.resolutionX,
+        height: sheet.resolutionY
+      }, this.scene, false);
+      sheet.material.diffuseTexture = sheet.texture;
+      sheet.material.emissiveTexture = sheet.texture;
+    }
+
+    const values = [];
+    const matrix = sheet.mesh.getWorldMatrix();
+    for (let y = 0; y < sheet.resolutionY; y += 1) {
+      for (let x = 0; x < sheet.resolutionX; x += 1) {
+        const local = new BABYLON.Vector3(
+          (x + 0.5) / sheet.resolutionX - 0.5,
+          0.5 - (y + 0.5) / sheet.resolutionY,
+          0
+        );
+        const world = BABYLON.Vector3.TransformCoordinates(local, matrix);
+        const weightedProbes = this.getFieldWeightedProbes([world.x, world.y, world.z]);
+        values.push(evaluateFieldMetric({
+          sourceBakes: this.solverResult.sourceBakes,
+          weightedProbes,
+          product: sheet.product,
+          metric: sheet.metric,
+          weighting: sheet.weighting
+        }));
+      }
+    }
+
+    const finite = values.filter(Number.isFinite);
+    const min = Math.min(...finite);
+    const max = Math.max(...finite);
+    sheet.minValue = round3(min);
+    sheet.maxValue = round3(max);
+    const range = Math.max(0.001, max - min);
+    const context = sheet.texture.getContext();
+    const image = context.createImageData(sheet.resolutionX, sheet.resolutionY);
+    for (let i = 0; i < values.length; i += 1) {
+      const value = Number.isFinite(values[i]) ? values[i] : min;
+      const color = heatmapColor((value - min) / range);
+      image.data[i * 4] = color[0];
+      image.data[i * 4 + 1] = color[1];
+      image.data[i * 4 + 2] = color[2];
+      image.data[i * 4 + 3] = 230;
+    }
+    context.putImageData(image, 0, 0);
+    drawFieldLegend(context, sheet, min, max);
+    sheet.texture.update(false);
+    this.updateFieldSheetControls();
+  }
+
+  getFieldWeightedProbes(position) {
+    const located = this.sampler?.locate(position, { acousticRegionId: 'zone_main' });
+    if (located?.probes?.length) {
+      return located.probes;
+    }
+    const nearest = [...(this.previewBake?.probes ?? [])]
+      .map(probe => ({ probe, distance: distance3(position, probe.position) }))
+      .sort((a, b) => a.distance - b.distance)
+      .slice(0, 4);
+    const weighted = nearest.map(entry => ({
+      ...entry,
+      weight: 1 / Math.max(0.0001, entry.distance * entry.distance)
+    }));
+    const total = weighted.reduce((sum, entry) => sum + entry.weight, 0);
+    return weighted.map(entry => ({
+      probe: entry.probe,
+      distance: entry.distance,
+      weight: entry.weight / Math.max(0.0001, total)
+    }));
+  }
+
   selectObject(source) {
     const object = normalizeSceneObject(source);
     if (!object) {
@@ -549,7 +753,9 @@ export class BabylonAuralisatorRenderer {
     this.detachSelectedProbe();
     this.selectedObject = object;
     this.attachObjectGizmo(object.node);
+    this.setObjectGizmoMode(object.objectType === 'fieldSheet' ? this.fieldControls.tool?.value ?? 'move' : 'move');
     this.updateObjectControls();
+    this.updateFieldSheetControls();
     this.setStatus(`${object.name} selected for movement.`);
   }
 
@@ -566,6 +772,7 @@ export class BabylonAuralisatorRenderer {
     this.objectGizmoManager?.attachToNode?.(null);
     this.objectGizmoManager?.attachToMesh?.(null);
     this.updateObjectControls();
+    this.updateFieldSheetControls();
   }
 
   syncSelectedObjectFromNode() {
@@ -577,6 +784,9 @@ export class BabylonAuralisatorRenderer {
     this.selectedObject.position = position;
     if (this.selectedObject.objectType === 'speaker' || this.selectedObject.objectType === 'listener' || this.selectedObject.objectType === 'wall') {
       this.selectedObject.source.position = position;
+    }
+    if (this.selectedObject.objectType === 'fieldSheet') {
+      this.syncFieldSheetFromMesh(this.selectedObject.source);
     }
     this.updateObjectControls();
   }
@@ -592,6 +802,7 @@ export class BabylonAuralisatorRenderer {
     ];
     this.selectedObject.node.position = BABYLON.Vector3.FromArray(position);
     this.syncSelectedObjectFromNode();
+    this.refreshSelectedFieldSheet();
     this.onSceneObjectChange();
   }
 
@@ -600,6 +811,15 @@ export class BabylonAuralisatorRenderer {
       return;
     }
     const object = this.selectedObject;
+    if (object.objectType === 'fieldSheet') {
+      object.source.texture?.dispose();
+      object.source.material?.dispose();
+      object.source.mesh?.dispose();
+      this.fieldSheets = this.fieldSheets.filter(entry => entry !== object.source);
+      this.detachSelectedObject();
+      this.setImportStatus(`Deleted ${object.name}.`);
+      return;
+    }
     if (object.objectType !== 'imported') {
       this.setImportStatus('Built-in speakers, listener, and walls cannot be deleted here.');
       return;
@@ -616,7 +836,7 @@ export class BabylonAuralisatorRenderer {
   updateObjectControls() {
     const object = this.selectedObject;
     if (this.objectControls.stats) {
-      this.objectControls.stats.textContent = `${this.importedObjects.length} imported geometry object(s). Click speakers, walls, listener, or imported meshes to move them.`;
+      this.objectControls.stats.textContent = `${this.importedObjects.length} imported object(s) / ${this.fieldSheets.length} field sheet(s). Click speakers, walls, listener, sheets, or imported meshes to move them.`;
     }
     if (this.objectControls.selectedName) {
       this.objectControls.selectedName.textContent = object ? `${object.name} / ${object.objectType}` : 'No object selected';
@@ -634,6 +854,81 @@ export class BabylonAuralisatorRenderer {
     }
   }
 
+  populateFieldControls() {
+    if (this.fieldControls.product) {
+      this.fieldControls.product.replaceChildren(
+        ...FIELD_PRODUCTS.map(product => {
+          const option = document.createElement('option');
+          option.value = product.id;
+          option.textContent = product.label;
+          return option;
+        }),
+        ...this.appScene.speakers
+          .filter(speaker => !FIELD_PRODUCTS.some(product => product.id === speaker.id))
+          .map(speaker => {
+            const option = document.createElement('option');
+            option.value = speaker.id;
+            option.textContent = speaker.name ?? speaker.id;
+            return option;
+          })
+      );
+    }
+    if (this.fieldControls.metric) {
+      this.fieldControls.metric.replaceChildren(...FIELD_METRICS.map(metric => {
+        const option = document.createElement('option');
+        option.value = metric.id;
+        option.textContent = metric.label;
+        return option;
+      }));
+    }
+    if (this.fieldControls.weighting) {
+      this.fieldControls.weighting.replaceChildren(...FIELD_WEIGHTINGS.map(weighting => {
+        const option = document.createElement('option');
+        option.value = weighting.id;
+        option.textContent = weighting.label;
+        return option;
+      }));
+      this.fieldControls.weighting.value = 'z';
+    }
+  }
+
+  updateFieldSheetControls() {
+    const sheet = this.selectedObject?.objectType === 'fieldSheet' ? this.selectedObject.source : null;
+    if (this.fieldControls.updateButton) {
+      this.fieldControls.updateButton.disabled = !sheet;
+    }
+    if (this.fieldControls.deleteButton) {
+      this.fieldControls.deleteButton.disabled = !sheet;
+    }
+    if (sheet) {
+      if (this.fieldControls.product) this.fieldControls.product.value = sheet.product;
+      if (this.fieldControls.metric) this.fieldControls.metric.value = sheet.metric;
+      if (this.fieldControls.weighting) this.fieldControls.weighting.value = sheet.weighting;
+      if (this.fieldControls.resolutionX) this.fieldControls.resolutionX.value = String(sheet.resolutionX);
+      if (this.fieldControls.resolutionY) this.fieldControls.resolutionY.value = String(sheet.resolutionY);
+      if (this.fieldControls.width) this.fieldControls.width.value = String(sheet.width);
+      if (this.fieldControls.height) this.fieldControls.height.value = String(sheet.height);
+    }
+    if (this.fieldControls.stats) {
+      if (sheet) {
+        const unit = metricUnit(sheet.metric);
+        const unitText = unit ? ` ${unit}` : '';
+        this.fieldControls.stats.textContent = `${sheet.name}: ${sheet.resolutionX} x ${sheet.resolutionY}, ${sheet.minValue}${unitText} to ${sheet.maxValue}${unitText}, ${sheet.weighting.toUpperCase()} weighting.`;
+      } else {
+        this.fieldControls.stats.textContent = `${this.fieldSheets.length} field sheet(s). Add a sheet, then move, rotate, or resize it with the selected gizmo tool.`;
+      }
+    }
+  }
+
+  setObjectGizmoMode(mode = 'move') {
+    if (!this.objectGizmoManager) {
+      return;
+    }
+    this.objectGizmoManager.positionGizmoEnabled = mode === 'move';
+    this.objectGizmoManager.rotationGizmoEnabled = mode === 'rotate';
+    this.objectGizmoManager.scaleGizmoEnabled = mode === 'resize';
+  }
+
   setImportStatus(message) {
     if (this.objectControls.importStatus) {
       this.objectControls.importStatus.textContent = message;
@@ -646,6 +941,9 @@ export class BabylonAuralisatorRenderer {
     });
     if (this.solverControls.stats) {
       this.renderSolverStats(this.solverResult);
+    }
+    for (const sheet of this.fieldSheets) {
+      this.renderFieldSheet(sheet);
     }
     this.setStatus('Preview baked-field solver completed.');
   }
@@ -977,6 +1275,25 @@ export class BabylonAuralisatorRenderer {
   bindControls() {
     this.objectControls.importInput?.addEventListener('change', event => this.importGeometryFiles(event.target.files));
     this.objectControls.deleteButton?.addEventListener('click', () => this.deleteSelectedObject());
+    this.fieldControls.addButton?.addEventListener('click', () => this.createFieldSheet());
+    this.fieldControls.updateButton?.addEventListener('click', () => this.applyFieldSheetControlsToSelected());
+    this.fieldControls.deleteButton?.addEventListener('click', () => this.deleteSelectedObject());
+    this.fieldControls.tool?.addEventListener('change', () => this.setObjectGizmoMode(this.fieldControls.tool.value));
+    for (const control of [
+      this.fieldControls.product,
+      this.fieldControls.metric,
+      this.fieldControls.weighting,
+      this.fieldControls.resolutionX,
+      this.fieldControls.resolutionY,
+      this.fieldControls.width,
+      this.fieldControls.height
+    ]) {
+      control?.addEventListener('change', () => {
+        if (this.selectedObject?.objectType === 'fieldSheet') {
+          this.applyFieldSheetControlsToSelected();
+        }
+      });
+    }
     for (const input of [this.objectControls.x, this.objectControls.y, this.objectControls.z]) {
       input?.addEventListener('change', () => this.updateSelectedObjectFromInputs());
       input?.addEventListener('keydown', event => {
@@ -1210,6 +1527,64 @@ function isTypingTarget(target) {
     || target?.isContentEditable;
 }
 
+function heatmapColor(t) {
+  const stops = [
+    [8, 18, 34],
+    [18, 121, 167],
+    [75, 210, 145],
+    [246, 207, 77],
+    [224, 70, 52]
+  ];
+  const clamped = clamp(t, 0, 1);
+  const scaled = clamped * (stops.length - 1);
+  const index = Math.min(stops.length - 2, Math.floor(scaled));
+  const local = scaled - index;
+  return [
+    Math.round(lerp(stops[index][0], stops[index + 1][0], local)),
+    Math.round(lerp(stops[index][1], stops[index + 1][1], local)),
+    Math.round(lerp(stops[index][2], stops[index + 1][2], local))
+  ];
+}
+
+function drawFieldLegend(context, sheet, min, max) {
+  const width = sheet.resolutionX;
+  const height = sheet.resolutionY;
+  if (width < 80 || height < 48) {
+    return;
+  }
+  const gradientWidth = Math.max(48, Math.min(220, width * 0.38));
+  const x = 10;
+  const y = height - 22;
+  const gradient = context.createLinearGradient(x, 0, x + gradientWidth, 0);
+  for (let i = 0; i <= 8; i += 1) {
+    const color = heatmapColor(i / 8);
+    gradient.addColorStop(i / 8, `rgb(${color[0]}, ${color[1]}, ${color[2]})`);
+  }
+  context.fillStyle = 'rgba(4, 10, 14, 0.72)';
+  context.fillRect(6, height - 44, gradientWidth + 108, 36);
+  context.fillStyle = gradient;
+  context.fillRect(x, y, gradientWidth, 8);
+  context.strokeStyle = 'rgba(255, 255, 255, 0.45)';
+  context.strokeRect(x, y, gradientWidth, 8);
+  context.fillStyle = '#f0fbff';
+  context.font = '11px Segoe UI, sans-serif';
+  const unit = metricUnit(sheet.metric);
+  const suffix = unit ? ` ${unit}` : '';
+  context.fillText(`${round3(min)}${suffix}`, x, y - 6);
+  context.fillText(`${round3(max)}${suffix}`, x + gradientWidth + 8, y + 8);
+}
+
+function lerp(a, b, t) {
+  return a + (b - a) * t;
+}
+
+function distance3(a, b) {
+  const dx = a[0] - b[0];
+  const dy = a[1] - b[1];
+  const dz = a[2] - b[2];
+  return Math.sqrt(dx * dx + dy * dy + dz * dz);
+}
+
 function normalizeSceneObject(metadata) {
   if (!metadata?.source) {
     return null;
@@ -1218,6 +1593,14 @@ function normalizeSceneObject(metadata) {
     return {
       ...metadata.source,
       objectType: 'imported',
+      node: metadata.source.node,
+      source: metadata.source
+    };
+  }
+  if (metadata.objectType === 'fieldSheet') {
+    return {
+      ...metadata.source,
+      objectType: 'fieldSheet',
       node: metadata.source.node,
       source: metadata.source
     };
