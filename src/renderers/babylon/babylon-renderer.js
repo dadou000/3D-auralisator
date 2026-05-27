@@ -428,17 +428,17 @@ export class BabylonAuralisatorRenderer {
       this.syncSelectedObjectFromNode();
       this.onSceneObjectChange();
       this.updateObjectControls();
-      this.refreshSelectedFieldSheet();
+      this.markSelectedFieldSheetDirty();
     });
     this.objectGizmoManager.gizmos.rotationGizmo?.onDragEndObservable?.add(() => {
       this.syncSelectedObjectFromNode();
       this.updateFieldSheetControls();
-      this.refreshSelectedFieldSheet();
+      this.markSelectedFieldSheetDirty();
     });
     this.objectGizmoManager.gizmos.scaleGizmo?.onDragEndObservable?.add(() => {
       this.syncSelectedObjectFromNode();
       this.updateFieldSheetControls();
-      this.refreshSelectedFieldSheet();
+      this.markSelectedFieldSheetDirty();
     });
   }
 
@@ -575,14 +575,11 @@ export class BabylonAuralisatorRenderer {
     mesh.rotation.x = Math.PI / 2;
     mesh.scaling = new BABYLON.Vector3(settings.width, settings.height, 1);
 
-    const texture = new BABYLON.DynamicTexture(`${mesh.name}_texture`, {
-      width: settings.resolutionX,
-      height: settings.resolutionY
-    }, this.scene, false);
-    texture.hasAlpha = false;
     const material = new BABYLON.StandardMaterial(`${mesh.name}_mat`, this.scene);
-    material.diffuseTexture = texture;
-    material.emissiveTexture = texture;
+    material.diffuseColor = new BABYLON.Color3(0.7, 0.95, 1);
+    material.emissiveColor = new BABYLON.Color3(0.08, 0.18, 0.22);
+    material.alpha = 0.35;
+    material.transparencyMode = BABYLON.Material.MATERIAL_ALPHABLEND;
     material.disableLighting = true;
     material.backFaceCulling = false;
     mesh.material = material;
@@ -594,7 +591,7 @@ export class BabylonAuralisatorRenderer {
       node: mesh,
       mesh,
       material,
-      texture,
+      texture: null,
       width: settings.width,
       height: settings.height,
       resolutionX: settings.resolutionX,
@@ -602,15 +599,15 @@ export class BabylonAuralisatorRenderer {
       product: settings.product,
       metric: settings.metric,
       weighting: settings.weighting,
-      minValue: 0,
-      maxValue: 0
+      minValue: null,
+      maxValue: null,
+      dirty: true
     };
     this.fieldSheetCounter += 1;
     mesh.metadata = { type: 'sceneObject', objectType: 'fieldSheet', source: sheet, node: mesh, movable: true };
     this.fieldSheets.push(sheet);
     this.selectObject(mesh.metadata);
-    this.renderFieldSheet(sheet);
-    this.setStatus(`${sheet.name} created.`);
+    this.setStatus(`${sheet.name} placed. Move, rotate, or resize it, then press Update sheet to sample.`);
     return sheet;
   }
 
@@ -642,14 +639,16 @@ export class BabylonAuralisatorRenderer {
     sheet.mesh.scaling.x = settings.width;
     sheet.mesh.scaling.y = settings.height;
     this.setObjectGizmoMode(this.fieldControls.tool?.value ?? 'move');
+    sheet.dirty = false;
     this.renderFieldSheet(sheet);
   }
 
-  refreshSelectedFieldSheet() {
+  markSelectedFieldSheetDirty() {
     const sheet = this.selectedObject?.objectType === 'fieldSheet' ? this.selectedObject.source : null;
     if (sheet) {
       this.syncFieldSheetFromMesh(sheet);
-      this.renderFieldSheet(sheet);
+      sheet.dirty = true;
+      this.updateFieldSheetControls();
     }
   }
 
@@ -671,14 +670,17 @@ export class BabylonAuralisatorRenderer {
     if (!this.solverResult?.sourceBakes?.length) {
       return;
     }
-    if (sheet.texture.getSize().width !== sheet.resolutionX || sheet.texture.getSize().height !== sheet.resolutionY) {
-      sheet.texture.dispose();
+    if (!sheet.texture || sheet.texture.getSize().width !== sheet.resolutionX || sheet.texture.getSize().height !== sheet.resolutionY) {
+      sheet.texture?.dispose();
       sheet.texture = new BABYLON.DynamicTexture(`${sheet.id}_texture_${sheet.resolutionX}x${sheet.resolutionY}`, {
         width: sheet.resolutionX,
         height: sheet.resolutionY
       }, this.scene, false);
+      sheet.texture.hasAlpha = false;
       sheet.material.diffuseTexture = sheet.texture;
       sheet.material.emissiveTexture = sheet.texture;
+      sheet.material.diffuseColor = BABYLON.Color3.White();
+      sheet.material.alpha = 1;
     }
 
     const values = [];
@@ -802,7 +804,7 @@ export class BabylonAuralisatorRenderer {
     ];
     this.selectedObject.node.position = BABYLON.Vector3.FromArray(position);
     this.syncSelectedObjectFromNode();
-    this.refreshSelectedFieldSheet();
+    this.markSelectedFieldSheetDirty();
     this.onSceneObjectChange();
   }
 
@@ -913,7 +915,13 @@ export class BabylonAuralisatorRenderer {
       if (sheet) {
         const unit = metricUnit(sheet.metric);
         const unitText = unit ? ` ${unit}` : '';
-        this.fieldControls.stats.textContent = `${sheet.name}: ${sheet.resolutionX} x ${sheet.resolutionY}, ${sheet.minValue}${unitText} to ${sheet.maxValue}${unitText}, ${sheet.weighting.toUpperCase()} weighting.`;
+        const valueText = Number.isFinite(sheet.minValue) && Number.isFinite(sheet.maxValue)
+          ? `${sheet.minValue}${unitText} to ${sheet.maxValue}${unitText}`
+          : 'not rendered';
+        const dirtyText = sheet.dirty
+          ? ` / press Update sheet to ${Number.isFinite(sheet.minValue) ? 'redraw' : 'sample'}`
+          : '';
+        this.fieldControls.stats.textContent = `${sheet.name}: ${sheet.resolutionX} x ${sheet.resolutionY}, ${valueText}, ${sheet.weighting.toUpperCase()} weighting${dirtyText}.`;
       } else {
         this.fieldControls.stats.textContent = `${this.fieldSheets.length} field sheet(s). Add a sheet, then move, rotate, or resize it with the selected gizmo tool.`;
       }
@@ -941,9 +949,6 @@ export class BabylonAuralisatorRenderer {
     });
     if (this.solverControls.stats) {
       this.renderSolverStats(this.solverResult);
-    }
-    for (const sheet of this.fieldSheets) {
-      this.renderFieldSheet(sheet);
     }
     this.setStatus('Preview baked-field solver completed.');
   }
@@ -1290,7 +1295,8 @@ export class BabylonAuralisatorRenderer {
     ]) {
       control?.addEventListener('change', () => {
         if (this.selectedObject?.objectType === 'fieldSheet') {
-          this.applyFieldSheetControlsToSelected();
+          this.selectedObject.source.dirty = true;
+          this.updateFieldSheetControls();
         }
       });
     }

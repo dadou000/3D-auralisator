@@ -1,6 +1,6 @@
 import { createDefaultAuralisatorScene, summarizeScene } from './app/default-scene.js';
-import { AuralisatorAudioEngine } from './audio/audio-engine.js?v=field-viz2';
-import { BabylonAuralisatorRenderer } from './renderers/babylon/babylon-renderer.js?v=field-viz2';
+import { AuralisatorAudioEngine } from './audio/audio-engine.js?v=field-viz3';
+import { BabylonAuralisatorRenderer } from './renderers/babylon/babylon-renderer.js?v=field-viz3';
 
 const appScene = createDefaultAuralisatorScene();
 const summary = summarizeScene(appScene);
