@@ -689,7 +689,7 @@ export class BabylonAuralisatorRenderer {
       for (let x = 0; x < sheet.resolutionX; x += 1) {
         const local = new BABYLON.Vector3(
           (x + 0.5) / sheet.resolutionX - 0.5,
-          0.5 - (y + 0.5) / sheet.resolutionY,
+          (y + 0.5) / sheet.resolutionY - 0.5,
           0
         );
         const world = BABYLON.Vector3.TransformCoordinates(local, matrix);
