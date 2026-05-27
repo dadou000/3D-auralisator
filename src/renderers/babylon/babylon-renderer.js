@@ -72,6 +72,12 @@ export class BabylonAuralisatorRenderer {
       mouseSensitivity: 0.0022,
       keys: Object.create(null)
     };
+    this.editorMove = {
+      active: false,
+      speed: 2.4,
+      sprintMultiplier: 2,
+      keys: Object.create(null)
+    };
   }
 
   async init(appScene) {
@@ -81,6 +87,7 @@ export class BabylonAuralisatorRenderer {
 
     this.appScene = appScene;
     this.engine = await this.createEngine();
+    this.canvas.tabIndex = 0;
     this.scene = new BABYLON.Scene(this.engine);
     this.scene.clearColor = new BABYLON.Color4(0.025, 0.03, 0.04, 1);
     this.scene.collisionsEnabled = true;
@@ -98,6 +105,7 @@ export class BabylonAuralisatorRenderer {
 
     this.engine.runRenderLoop(() => {
       this.updateFpv(this.engine.getDeltaTime() / 1000);
+      this.updateEditorListenerMovement(this.engine.getDeltaTime() / 1000);
       this.animateProbeField();
       this.scene.render();
     });
@@ -633,7 +641,9 @@ export class BabylonAuralisatorRenderer {
   }
 
   runPreviewSolver() {
-    this.solverResult = solvePreviewAcousticField(this.appScene, this.previewBake?.probes ?? []);
+    this.solverResult = solvePreviewAcousticField(this.appScene, this.previewBake?.probes ?? [], {
+      quality: this.solverControls.quality?.value ?? 'draft'
+    });
     if (this.solverControls.stats) {
       this.renderSolverStats(this.solverResult);
     }
@@ -642,10 +652,16 @@ export class BabylonAuralisatorRenderer {
 
   renderSolverStats(result) {
     const items = [
+      ['Solver', result.solver],
+      ['Quality', result.quality],
       ['Responses', result.responses.length],
       ['Occluded', result.occluded],
       ['Early events', result.stats.earlyEventCount],
       ['LF bins', result.stats.lowFrequencyBinCount],
+      ['Max order', result.stats.maxReflectionOrder],
+      ['Adaptive', result.stats.adaptiveCandidateCount],
+      ['Validation', result.stats.validationSampleCount],
+      ['Runtime cells', result.runtimeCells.length],
       ['Avg gain', result.averageGain.toFixed(3)]
     ];
     this.solverControls.stats.replaceChildren(
@@ -852,7 +868,7 @@ export class BabylonAuralisatorRenderer {
     const keys = this.fpv.keys;
     const listener = this.appScene.listener;
     const forward = getHorizontalForward(this.fpv.yaw);
-    const right = new BABYLON.Vector3(forward.z, 0, -forward.x);
+    const right = getHorizontalRight(this.fpv.yaw);
     const move = new BABYLON.Vector3(0, 0, 0);
 
     if (keys.KeyW) move.addInPlace(forward);
@@ -885,8 +901,6 @@ export class BabylonAuralisatorRenderer {
     const forward = getLookForward(this.fpv.yaw, this.fpv.pitch);
     this.camera.position.copyFrom(position);
     this.camera.setTarget(position.add(forward));
-    this.camera.rotation.x = -this.fpv.pitch;
-    this.camera.rotation.y = this.fpv.yaw;
   }
 
   syncListenerVisual() {
@@ -903,7 +917,7 @@ export class BabylonAuralisatorRenderer {
     if (!this.fpv.enabled || document.pointerLockElement !== this.canvas) {
       return;
     }
-    this.fpv.yaw -= event.movementX * this.fpv.mouseSensitivity;
+    this.fpv.yaw += event.movementX * this.fpv.mouseSensitivity;
     this.fpv.pitch = clamp(
       this.fpv.pitch - event.movementY * this.fpv.mouseSensitivity,
       BABYLON.Tools.ToRadians(-80),
@@ -914,6 +928,50 @@ export class BabylonAuralisatorRenderer {
     this.syncListenerVisual();
     this.syncCameraToListener();
     this.onListenerChange();
+  }
+
+  updateEditorListenerMovement(deltaSeconds) {
+    if (this.fpv.enabled || !this.appScene?.listener || !this.isEditorListenerMovementActive()) {
+      return;
+    }
+    const keys = this.editorMove.keys;
+    const listener = this.appScene.listener;
+    const yaw = BABYLON.Tools.ToRadians(listener.yaw ?? 0);
+    const forward = getHorizontalForward(yaw);
+    const right = getHorizontalRight(yaw);
+    const move = new BABYLON.Vector3(0, 0, 0);
+
+    if (keys.KeyW) move.addInPlace(forward);
+    if (keys.KeyS) move.subtractInPlace(forward);
+    if (keys.KeyD) move.addInPlace(right);
+    if (keys.KeyA) move.subtractInPlace(right);
+    if (keys.KeyE || keys.Space) move.y += 1;
+    if (keys.KeyQ || keys.KeyC) move.y -= 1;
+
+    if (move.lengthSquared() <= 0) {
+      return;
+    }
+
+    move.normalize();
+    const speed = this.editorMove.speed * (keys.ShiftLeft || keys.ShiftRight ? this.editorMove.sprintMultiplier : 1);
+    const current = BABYLON.Vector3.FromArray(listener.position);
+    current.addInPlace(move.scale(speed * deltaSeconds));
+    listener.position = [
+      round3(clamp(current.x, this.appScene.bounds.min[0] + 0.2, this.appScene.bounds.max[0] - 0.2)),
+      round3(clamp(current.y, this.appScene.bounds.min[1] + 0.2, this.appScene.bounds.max[1] - 0.2)),
+      round3(clamp(current.z, this.appScene.bounds.min[2] + 0.2, this.appScene.bounds.max[2] - 0.2))
+    ];
+    this.syncListenerVisual();
+    if (this.selectedObject?.objectType === 'listener') {
+      this.updateObjectControls();
+    }
+    this.onListenerChange();
+  }
+
+  isEditorListenerMovementActive() {
+    return this.editorMove.active
+      || this.selectedObject?.objectType === 'listener'
+      || document.activeElement === this.canvas;
   }
 
   bindControls() {
@@ -930,6 +988,8 @@ export class BabylonAuralisatorRenderer {
     this.solverControls.runButton?.addEventListener('click', () => this.runPreviewSolver());
 
     this.canvas.addEventListener('click', () => {
+      this.editorMove.active = true;
+      this.canvas.focus?.();
       if (this.fpv.enabled && document.pointerLockElement !== this.canvas) {
         this.requestFpvPointerLock();
       }
@@ -950,9 +1010,25 @@ export class BabylonAuralisatorRenderer {
     }, { passive: false });
     window.addEventListener('keyup', event => {
       if (!this.fpv.enabled) {
+        if (isMovementKey(event.code)) {
+          this.editorMove.keys[event.code] = false;
+        }
         return;
       }
       this.fpv.keys[event.code] = false;
+    });
+    window.addEventListener('keydown', event => {
+      if (this.fpv.enabled || isTypingTarget(event.target) || !isMovementKey(event.code) || !this.isEditorListenerMovementActive()) {
+        return;
+      }
+      this.editorMove.keys[event.code] = true;
+      event.preventDefault();
+    }, { passive: false });
+    window.addEventListener('pointerdown', event => {
+      if (event.target !== this.canvas && !event.target?.closest?.('.viewport')) {
+        this.editorMove.active = false;
+        this.editorMove.keys = Object.create(null);
+      }
     });
     document.addEventListener('mousemove', event => this.handleFpvMouseMove(event));
     document.addEventListener('pointerlockchange', () => {
@@ -1107,15 +1183,31 @@ function round3(value) {
 }
 
 function getHorizontalForward(yaw) {
-  return new BABYLON.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw));
+  return new BABYLON.Vector3(Math.sin(yaw), 0, Math.cos(yaw));
+}
+
+function getHorizontalRight(yaw) {
+  return new BABYLON.Vector3(Math.cos(yaw), 0, -Math.sin(yaw));
 }
 
 function getLookForward(yaw, pitch) {
   return new BABYLON.Vector3(
-    -Math.sin(yaw) * Math.cos(pitch),
+    Math.sin(yaw) * Math.cos(pitch),
     Math.sin(pitch),
-    -Math.cos(yaw) * Math.cos(pitch)
+    Math.cos(yaw) * Math.cos(pitch)
   );
+}
+
+function isMovementKey(code) {
+  return ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space', 'KeyQ', 'KeyE', 'KeyC', 'ShiftLeft', 'ShiftRight'].includes(code);
+}
+
+function isTypingTarget(target) {
+  const tagName = target?.tagName?.toLowerCase?.();
+  return tagName === 'input'
+    || tagName === 'textarea'
+    || tagName === 'select'
+    || target?.isContentEditable;
 }
 
 function normalizeSceneObject(metadata) {

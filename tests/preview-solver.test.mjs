@@ -23,10 +23,14 @@ test('preview solver generates speaker-probe responses', () => {
   assert.equal(result.speakers, 2);
   assert.equal(result.probes, 4);
   assert.equal(result.responses.length, 8);
-  assert.equal(result.solver, 'preview-baked-field-v1');
+  assert.equal(result.solver, 'preview-baked-field-v2');
+  assert.equal(result.bakePhilosophy, 'offline-heavy-runtime-sampler');
   assert.equal(result.sourceBakes.length, 2);
   assert.equal(result.frequencyBands.length, SOLVER_FREQUENCY_BANDS.length);
   assert.equal(result.lowFrequencyBins.length, LOW_FREQUENCY_BINS.length);
+  assert.ok(result.probeGraph.probes.length > 0);
+  assert.ok(result.runtimeCells.length > 0);
+  assert.ok(result.chunks.length > 0);
   assert.ok(result.averageGain > 0);
 });
 
@@ -48,9 +52,31 @@ test('preview solver emits bake-shaped probe response components', () => {
   assert.equal(Object.keys(response.direct.gainPerBand).length, SOLVER_FREQUENCY_BANDS.length);
   assert.ok(response.early.length > 0);
   assert.equal(response.lowFrequency.bins.length, LOW_FREQUENCY_BINS.length);
+  assert.equal(response.lowMid.representation, 'hybrid-directional-phase');
+  assert.equal(response.highFrequency.representation, 'geometric-events-late-ir');
   assert.equal(response.late.encoding, 'foa');
   assert.ok(response.metrics.edc.length > 0);
   assert.ok(sourceBake.earlyReflectionDatabase.length >= response.early.length);
+  assert.equal(sourceBake.lateReverbField.representation, 'compressed-directional-ir');
+  assert.ok(sourceBake.runtimePayloads.lowFrequency.endsWith('low_freq_pressure.bin'));
+});
+
+test('preview solver emits validation and adaptive refinement metadata', () => {
+  const scene = createDefaultAuralisatorScene();
+  const bake = createPreviewBake({
+    sceneId: scene.id,
+    bounds: { min: [-2, 1.6, -2], max: [2, 1.6, 2] },
+    spacing: 4,
+    gridMode: '2d',
+    planeY: 1.6
+  });
+  const result = solvePreviewAcousticField(scene, bake.probes, { quality: 'final' });
+
+  assert.equal(result.adaptiveRefinement.method, 'neighbor-response-difference');
+  assert.equal(result.validation.method, 'deterministic-extra-listener-samples');
+  assert.ok(result.stats.maxReflectionOrder >= 5);
+  assert.ok(result.stats.validationSampleCount > 0);
+  assert.equal(result.probeGraph.interpolationPolicy.neverInterpolateThroughSolidWalls, true);
 });
 
 test('segment/AABB intersection detects a wall crossing', () => {

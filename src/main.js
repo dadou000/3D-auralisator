@@ -1,6 +1,6 @@
 import { createDefaultAuralisatorScene, summarizeScene } from './app/default-scene.js';
-import { AuralisatorAudioEngine } from './audio/audio-engine.js?v=routing-wires4';
-import { BabylonAuralisatorRenderer } from './renderers/babylon/babylon-renderer.js?v=routing-wires4';
+import { AuralisatorAudioEngine } from './audio/audio-engine.js?v=controls-solver3';
+import { BabylonAuralisatorRenderer } from './renderers/babylon/babylon-renderer.js?v=controls-solver3';
 
 const appScene = createDefaultAuralisatorScene();
 const summary = summarizeScene(appScene);
@@ -31,6 +31,7 @@ const renderer = new BabylonAuralisatorRenderer({
   },
   solverControls: {
     runButton: document.getElementById('runPreviewSolverBtn'),
+    quality: document.getElementById('solverQuality'),
     stats: document.getElementById('solverStats')
   },
   probeControls: {
@@ -47,6 +48,8 @@ const renderer = new BabylonAuralisatorRenderer({
     z: document.getElementById('probeZ')
   }
 });
+window.__auralisatorScene = appScene;
+window.__auralisatorRenderer = renderer;
 window.__auralisatorToggleFpv = () => renderer.toggleFpvMode();
 window.__auralisatorExitFpv = () => renderer.exitFpvMode();
 

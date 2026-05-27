@@ -1,3 +1,5 @@
+import { BAKE_QUALITY_PRESETS, FREQUENCY_RANGES } from '../schema.js';
+
 const SPEED_OF_SOUND = 343;
 
 export const SOLVER_FREQUENCY_BANDS = Object.freeze([31.5, 63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]);
@@ -13,11 +15,17 @@ const MATERIAL_ABSORPTION = Object.freeze({
 
 export function solvePreviewAcousticField(scene, probes, {
   occlusionLossDb = 12,
-  maxReflectionOrder = 1,
-  lateIrSeconds = 0.75,
-  sampleRate = 48000
+  quality = 'draft',
+  maxReflectionOrder,
+  lateIrSeconds,
+  sampleRate = 48000,
+  validationSamplesPerCell
 } = {}) {
   const responses = [];
+  const preset = BAKE_QUALITY_PRESETS[quality] ?? BAKE_QUALITY_PRESETS.draft;
+  const resolvedMaxReflectionOrder = maxReflectionOrder ?? preset.maxReflectionOrder;
+  const resolvedLateIrSeconds = lateIrSeconds ?? preset.lateIrSeconds;
+  const resolvedValidationSamples = validationSamplesPerCell ?? preset.validationSamplesPerCell;
   const rt60 = estimateRt60ByBand(scene);
   const sourceBakes = scene.speakers.map(speaker => {
     const sourceBake = createSourceBake({
@@ -26,8 +34,8 @@ export function solvePreviewAcousticField(scene, probes, {
       probes,
       rt60,
       occlusionLossDb,
-      maxReflectionOrder,
-      lateIrSeconds,
+      maxReflectionOrder: resolvedMaxReflectionOrder,
+      lateIrSeconds: resolvedLateIrSeconds,
       sampleRate
     });
     responses.push(...Object.values(sourceBake.probeResponses).map(response => ({
@@ -42,15 +50,39 @@ export function solvePreviewAcousticField(scene, probes, {
   });
 
   const occluded = responses.filter(response => response.occlusionHits > 0).length;
+  const adaptiveRefinement = analyzeAdaptiveRefinement(probes, sourceBakes, preset.targetProbeErrorDb);
+  const validation = createValidationPass(scene, probes, sourceBakes, adaptiveRefinement, {
+    samplesPerCell: resolvedValidationSamples,
+    targetProbeErrorDb: preset.targetProbeErrorDb
+  });
+  const chunks = createRuntimeChunks(scene, probes, sourceBakes);
   return {
-    solver: 'preview-baked-field-v1',
+    solver: 'preview-baked-field-v2',
+    bakePhilosophy: 'offline-heavy-runtime-sampler',
+    quality: preset.label,
+    qualityKey: quality,
     sampleRate,
     speedOfSound: SPEED_OF_SOUND,
     frequencyBands: SOLVER_FREQUENCY_BANDS,
     lowFrequencyBins: LOW_FREQUENCY_BINS,
+    frequencyRanges: FREQUENCY_RANGES,
+    bakeStrategy: {
+      bass: '20-200 Hz complex pressure/modal solve at probes',
+      lowMid: '200-1000 Hz hybrid occlusion, diffraction, phase, and directional energy',
+      high: '1-20 kHz geometric sparse early events plus compressed directional late IR'
+    },
+    runtimeContract: {
+      allowed: ['load chunks', 'locate listener cell', 'region-limited probe interpolation', 'crossfaded convolution', 'HRTF/Ambisonic decode'],
+      avoided: ['live propagation solving', 'live diffraction solving', 'live RT60 estimation', 'acoustic path tracing']
+    },
     speakers: scene.speakers.length,
     probes: probes.length,
     sourceBakes,
+    probeGraph: createProbeGraph(probes),
+    runtimeCells: chunks.cells,
+    chunks: chunks.chunks,
+    adaptiveRefinement,
+    validation,
     responses,
     occluded,
     averageGain: responses.reduce((sum, response) => sum + response.gain, 0) / Math.max(1, responses.length),
@@ -59,7 +91,10 @@ export function solvePreviewAcousticField(scene, probes, {
       probeResponseCount: responses.length,
       earlyEventCount: sourceBakes.reduce((sum, sourceBake) => sum + sourceBake.earlyReflectionDatabase.length, 0),
       lowFrequencyBinCount: LOW_FREQUENCY_BINS.length,
-      lateIrSeconds
+      maxReflectionOrder: resolvedMaxReflectionOrder,
+      adaptiveCandidateCount: adaptiveRefinement.candidates.length,
+      validationSampleCount: validation.samples.length,
+      lateIrSeconds: resolvedLateIrSeconds
     }
   };
 }
@@ -77,19 +112,30 @@ function createSourceBake({
   const probeResponses = {};
   for (const probe of probes) {
     const direct = solveDirectResponse(scene, speaker, probe, occlusionLossDb);
-    const early = maxReflectionOrder > 0 ? solveFirstOrderReflections(scene, speaker, probe) : [];
+    const early = maxReflectionOrder > 0 ? solveEarlyReflections(scene, speaker, probe, maxReflectionOrder) : [];
     const late = solveLateField(scene, speaker, probe, direct, rt60, { lateIrSeconds, sampleRate });
     const lowFrequency = solveLowFrequencyPressure(scene, speaker, probe);
+    const lowMid = solveLowMidHybridField(scene, speaker, probe, direct);
+    const highFrequency = solveHighFrequencyField(speaker, probe, early, late);
     probeResponses[probe.id] = {
       probeId: probe.id,
       direct,
       early,
       late,
       lowFrequency,
+      lowMid,
+      highFrequency,
+      representations: {
+        direct: 'analytic-delay-gain-with-baked-occlusion-diffraction',
+        early: 'sparse-event-list',
+        late: 'compressed-directional-ambisonic-ir',
+        lowFrequency: 'complex-pressure-map'
+      },
       metrics: {
         distance: direct.distance,
         directToReverbRatioDb: round3(linearToDb(direct.gain / Math.max(1e-6, late.lateEnergy.fullBand))),
         earlyEventCount: early.length,
+        earlyEnergy: round6(sumEarlyEnergy(early)),
         rt60,
         edt: scaleBandMap(rt60, 0.82),
         edc: buildEnergyDecayCurve(late.lateEnergy.fullBand, lateIrSeconds)
@@ -106,6 +152,7 @@ function createSourceBake({
       aim: speaker.aim ?? [0, 0, 1]
     },
     spectrum: createFlatBandMap(1),
+    sourceSpectrum: createFlatBandMap(1),
     probeResponses,
     lowFrequencyPressureField: Object.fromEntries(Object.values(probeResponses).map(response => [
       response.probeId,
@@ -116,17 +163,24 @@ function createSourceBake({
       probeId: response.probeId
     }))),
     lateReverbField: {
-      representation: 'compressed-directional-ir-placeholder',
+      representation: 'compressed-directional-ir',
       encoding: 'foa',
       sampleRate,
       seconds: lateIrSeconds,
       rt60,
       blocksPerProbe: Object.fromEntries(Object.keys(probeResponses).map(probeId => [probeId, `${speaker.id}/${probeId}/late_foa`]))
     },
+    runtimePayloads: {
+      direct: `/bake/${speaker.id}/direct.bin`,
+      early: `/bake/${speaker.id}/early_events.bin`,
+      late: `/bake/${speaker.id}/late_ambisonic_ir.bin`,
+      lowFrequency: `/bake/${speaker.id}/low_freq_pressure.bin`,
+      metrics: `/bake/${speaker.id}/metrics.bin`
+    },
     compression: {
       direct: 'band-float32-preview',
       early: 'delta-delay-band-gain-preview',
-      late: 'basis-ir-placeholder',
+      late: 'basis-ir-float16-preview',
       lowFrequency: 'complex-float32-preview'
     }
   };
@@ -162,45 +216,96 @@ function solveDirectResponse(scene, speaker, probe, occlusionLossDb) {
   };
 }
 
-function solveFirstOrderReflections(scene, speaker, probe) {
-  return scene.walls
-    .map(wall => createFirstOrderReflection(wall, speaker, probe))
-    .filter(Boolean)
-    .sort((a, b) => a.delayMs - b.delayMs);
+function solveEarlyReflections(scene, speaker, probe, maxReflectionOrder) {
+  const maxEvents = Math.min(96, scene.walls.length * Math.max(1, maxReflectionOrder) * 4);
+  const events = [];
+  for (let order = 1; order <= maxReflectionOrder && events.length < maxEvents; order += 1) {
+    for (const wallPath of buildWallPaths(scene.walls, order, maxEvents - events.length)) {
+      const event = createReflectionEvent(wallPath, speaker, probe);
+      if (event) {
+        events.push(event);
+      }
+    }
+  }
+  return events.sort((a, b) => a.delayMs - b.delayMs).slice(0, maxEvents);
 }
 
-function createFirstOrderReflection(wall, speaker, probe) {
-  const axis = wallPlaneAxis(wall);
+function createReflectionEvent(wallPath, speaker, probe) {
   const imageSource = [...speaker.position];
-  imageSource[axis] = 2 * wall.position[axis] - speaker.position[axis];
-  const reflectionPoint = estimateReflectionPointOnWall(wall, speaker.position, probe.position, axis);
-  const sourceToReflect = distance3(speaker.position, reflectionPoint);
-  const reflectToProbe = distance3(reflectionPoint, probe.position);
-  const pathLength = sourceToReflect + reflectToProbe;
+  for (const wall of wallPath) {
+    const axis = wallPlaneAxis(wall);
+    imageSource[axis] = 2 * wall.position[axis] - imageSource[axis];
+  }
+  const reflectionPoints = estimateReflectionPoints(wallPath, speaker.position, probe.position);
+  const pathLength = estimatePolylineLength([speaker.position, ...reflectionPoints, probe.position]);
   if (!Number.isFinite(pathLength) || pathLength < 1e-6) {
     return null;
   }
-  const material = wall.material ?? 'default';
+  const materialPath = wallPath.map(wall => wall.material ?? 'default');
+  const surfacePath = wallPath.map(wall => wall.id);
+  const lastReflectionPoint = reflectionPoints[reflectionPoints.length - 1] ?? speaker.position;
   const gain = 1 / Math.max(1, pathLength);
+  const reflectionLossByBand = Object.fromEntries(SOLVER_FREQUENCY_BANDS.map(frequency => [
+    frequency,
+    materialPath.reduce((product, material) => (
+      product * Math.sqrt(Math.max(0, 1 - materialAbsorption(material, frequency)))
+    ), 1)
+  ]));
   return {
-    wallId: wall.id,
+    wallId: surfacePath[0],
     imageSource: imageSource.map(round3),
-    reflectionPoint: reflectionPoint.map(round3),
+    reflectionPoint: lastReflectionPoint.map(round3),
+    reflectionPoints: reflectionPoints.map(point => point.map(round3)),
     pathLength: round3(pathLength),
     delayMs: round3(pathLength / SPEED_OF_SOUND * 1000),
-    direction: normalize3(subtract3(probe.position, reflectionPoint)),
+    direction: normalize3(subtract3(probe.position, lastReflectionPoint)),
     gainPerBand: Object.fromEntries(SOLVER_FREQUENCY_BANDS.map(frequency => {
-      const absorption = materialAbsorption(material, frequency);
-      return [frequency, round6(gain * Math.sqrt(Math.max(0, 1 - absorption)))];
+      return [frequency, round6(gain * reflectionLossByBand[frequency] * scatteringLoss(wallPath.length, frequency))];
     })),
-    phase: Object.fromEntries([250, 500, 1000].map(frequency => [
+    phase: Object.fromEntries([125, 250, 500, 1000].map(frequency => [
       frequency,
       round3(phaseForDistance(pathLength, frequency))
     ])),
-    reflectionOrder: 1,
-    surfacePath: [wall.id],
-    materialPath: [material]
+    scatteringPerBand: Object.fromEntries(SOLVER_FREQUENCY_BANDS.map(frequency => [
+      frequency,
+      round3(1 - scatteringLoss(wallPath.length, frequency))
+    ])),
+    reflectionOrder: wallPath.length,
+    surfacePath,
+    materialPath
   };
+}
+
+function buildWallPaths(walls, order, limit) {
+  if (order <= 1) {
+    return walls.slice(0, limit).map(wall => [wall]);
+  }
+  const paths = [];
+  const extend = path => {
+    if (paths.length >= limit) {
+      return;
+    }
+    if (path.length === order) {
+      paths.push(path);
+      return;
+    }
+    for (const wall of walls) {
+      if (path[path.length - 1]?.id === wall.id) {
+        continue;
+      }
+      extend([...path, wall]);
+      if (paths.length >= limit) {
+        break;
+      }
+    }
+  };
+  for (const wall of walls) {
+    extend([wall]);
+    if (paths.length >= limit) {
+      break;
+    }
+  }
+  return paths;
 }
 
 function solveLateField(scene, speaker, probe, direct, rt60, { lateIrSeconds, sampleRate }) {
@@ -247,6 +352,175 @@ function solveLowFrequencyPressure(scene, speaker, probe) {
       };
     })
   };
+}
+
+function solveLowMidHybridField(scene, speaker, probe, direct) {
+  const lowMidBands = SOLVER_FREQUENCY_BANDS.filter(frequency => frequency >= 250 && frequency <= 1000);
+  const wallHits = countWallIntersections(scene.walls, speaker.position, probe.position);
+  return {
+    representation: 'hybrid-directional-phase',
+    bands: Object.fromEntries(lowMidBands.map(frequency => {
+      const phase = phaseForDistance(distance3(speaker.position, probe.position), frequency);
+      const diffractionDb = wallHits > 0 ? -Math.min(12, 3 + frequency / 250) : 0;
+      return [frequency, {
+        directionalEnergy: round6(direct.gainPerBand[frequency] ?? direct.gain),
+        phase: round3(phase),
+        diffractionDb: round3(diffractionDb),
+        occlusionDb: direct.occlusionPerBand[frequency] ?? 0
+      }];
+    }))
+  };
+}
+
+function solveHighFrequencyField(speaker, probe, early, late) {
+  const highBands = SOLVER_FREQUENCY_BANDS.filter(frequency => frequency >= 1000);
+  return {
+    representation: 'geometric-events-late-ir',
+    sparseEventCount: early.filter(event => event.reflectionOrder <= 3).length,
+    lateIrBlock: `${speaker.id}/${probe.id}/late_foa`,
+    bands: Object.fromEntries(highBands.map(frequency => [
+      frequency,
+      {
+        earlyEnergy: round6(early.reduce((sum, event) => sum + ((event.gainPerBand[frequency] ?? 0) ** 2), 0)),
+        lateEnergy: late.lateEnergy.perBand[frequency] ?? 0
+      }
+    ]))
+  };
+}
+
+function analyzeAdaptiveRefinement(probes, sourceBakes, targetProbeErrorDb) {
+  const seen = new Set();
+  const candidates = [];
+  for (const probe of probes) {
+    for (const neighborId of probe.neighbors ?? []) {
+      const key = [probe.id, neighborId].sort().join('|');
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      const neighbor = probes.find(entry => entry.id === neighborId);
+      if (!neighbor || probe.acousticRegionId !== neighbor.acousticRegionId) {
+        continue;
+      }
+      const error = estimateProbePairError(probe.id, neighbor.id, sourceBakes);
+      if (error.totalDb > targetProbeErrorDb) {
+        candidates.push({
+          between: [probe.id, neighbor.id],
+          acousticRegionId: probe.acousticRegionId,
+          suggestedPosition: midpoint3(probe.position, neighbor.position).map(round3),
+          estimatedErrorDb: round3(error.totalDb),
+          reasons: error.reasons
+        });
+      }
+    }
+  }
+  return {
+    method: 'neighbor-response-difference',
+    targetProbeErrorDb,
+    candidates: candidates.sort((a, b) => b.estimatedErrorDb - a.estimatedErrorDb).slice(0, 64)
+  };
+}
+
+function estimateProbePairError(probeAId, probeBId, sourceBakes) {
+  let total = 0;
+  const reasons = new Set();
+  for (const sourceBake of sourceBakes) {
+    const a = sourceBake.probeResponses[probeAId];
+    const b = sourceBake.probeResponses[probeBId];
+    if (!a || !b) {
+      continue;
+    }
+    const gainDelta = Math.abs(linearToDb(a.direct.gain) - linearToDb(b.direct.gain));
+    const rt60Delta = averageBandDelta(a.metrics.rt60, b.metrics.rt60) * 2;
+    const earlyDelta = Math.abs(a.metrics.earlyEventCount - b.metrics.earlyEventCount);
+    const bassDelta = averageMagnitudeDelta(a.lowFrequency.bins, b.lowFrequency.bins) * 8;
+    const occlusionDelta = a.direct.occlusionHits === b.direct.occlusionHits ? 0 : 8;
+    total = Math.max(total, gainDelta + rt60Delta + earlyDelta + bassDelta + occlusionDelta);
+    if (gainDelta > 3) reasons.add('frequency response');
+    if (rt60Delta > 1) reasons.add('RT60/EDC');
+    if (earlyDelta > 2) reasons.add('early reflection timing');
+    if (bassDelta > 2) reasons.add('bass pressure phase/amplitude');
+    if (occlusionDelta > 0) reasons.add('direct path visibility');
+  }
+  return {
+    totalDb: total,
+    reasons: [...reasons]
+  };
+}
+
+function createValidationPass(scene, probes, sourceBakes, adaptiveRefinement, {
+  samplesPerCell,
+  targetProbeErrorDb
+}) {
+  const candidates = adaptiveRefinement.candidates.slice(0, Math.max(0, samplesPerCell));
+  const fallback = candidates.length ? [] : probes.slice(0, Math.max(0, samplesPerCell)).map(probe => ({
+    between: [probe.id],
+    acousticRegionId: probe.acousticRegionId,
+    suggestedPosition: probe.position,
+    estimatedErrorDb: 0,
+    reasons: ['baseline sample']
+  }));
+  const samples = [...candidates, ...fallback].map((candidate, index) => ({
+    id: `validation_${String(index).padStart(3, '0')}`,
+    position: candidate.suggestedPosition,
+    acousticRegionId: candidate.acousticRegionId,
+    comparedProbeIds: candidate.between,
+    interpolatedErrorDb: candidate.estimatedErrorDb,
+    pass: candidate.estimatedErrorDb <= targetProbeErrorDb,
+    reasons: candidate.reasons
+  }));
+  return {
+    method: 'deterministic-extra-listener-samples',
+    targetProbeErrorDb,
+    sceneBounds: scene.bounds,
+    sourceCount: sourceBakes.length,
+    samples,
+    failedSamples: samples.filter(sample => !sample.pass).length
+  };
+}
+
+function createProbeGraph(probes) {
+  return {
+    interpolationPolicy: {
+      method: 'region-limited-idw',
+      neverInterpolateThroughSolidWalls: true,
+      portalTransitionsOnly: true
+    },
+    probes: probes.map(probe => ({
+      id: probe.id,
+      position: probe.position,
+      validRadius: probe.validRadius,
+      neighbors: probe.neighbors ?? [],
+      acousticRegionId: probe.acousticRegionId,
+      roomId: probe.roomId ?? null,
+      portalId: probe.portalId ?? null,
+      occlusionRegionId: probe.occlusionRegionId ?? null,
+      acousticGradient: probe.acousticGradient ?? [0, 0, 0]
+    }))
+  };
+}
+
+function createRuntimeChunks(scene, probes, sourceBakes) {
+  const chunk = {
+    id: 'chunk_main',
+    bounds: scene.bounds,
+    probeIds: probes.map(probe => probe.id),
+    sourceIds: sourceBakes.map(sourceBake => sourceBake.sourceId),
+    payloads: Object.fromEntries(sourceBakes.map(sourceBake => [sourceBake.sourceId, sourceBake.runtimePayloads]))
+  };
+  const cells = [{
+    id: 'cell_main',
+    bounds: scene.bounds,
+    acousticRegionId: probes[0]?.acousticRegionId ?? 'zone_main',
+    probeIds: probes.map(probe => probe.id),
+    interpolationMethod: 'region-limited-idw',
+    maxProbeCount: 4,
+    sourceResponseBlocks: Object.fromEntries(sourceBakes.map(sourceBake => [
+      sourceBake.sourceId,
+      Object.keys(sourceBake.probeResponses).map(probeId => `${sourceBake.sourceId}/${probeId}`)
+    ]))
+  }];
+  return { chunks: [chunk], cells };
 }
 
 export function countWallIntersections(walls, start, end) {
@@ -349,6 +623,65 @@ function estimateReflectionPointOnWall(wall, source, probe, axis) {
     point[i] = Math.min(wall.position[i] + half[i], Math.max(wall.position[i] - half[i], point[i]));
   }
   return point;
+}
+
+function estimateReflectionPoints(wallPath, source, probe) {
+  return wallPath.map((wall, index) => {
+    const t = (index + 1) / (wallPath.length + 1);
+    const point = [
+      source[0] + (probe[0] - source[0]) * t,
+      source[1] + (probe[1] - source[1]) * t,
+      source[2] + (probe[2] - source[2]) * t
+    ];
+    const axis = wallPlaneAxis(wall);
+    return estimateReflectionPointOnWall(wall, point, point, axis);
+  });
+}
+
+function estimatePolylineLength(points) {
+  let length = 0;
+  for (let i = 1; i < points.length; i += 1) {
+    length += distance3(points[i - 1], points[i]);
+  }
+  return length;
+}
+
+function scatteringLoss(order, frequency) {
+  return Math.max(0.25, Math.pow(0.96 - Math.min(0.12, frequency / 120000), order));
+}
+
+function sumEarlyEnergy(events) {
+  return events.reduce((sum, event) => (
+    sum + Object.values(event.gainPerBand).reduce((bandSum, gain) => bandSum + gain * gain, 0)
+  ), 0);
+}
+
+function averageBandDelta(a, b) {
+  const keys = Object.keys(a ?? {});
+  if (!keys.length) {
+    return 0;
+  }
+  return keys.reduce((sum, key) => sum + Math.abs((a[key] ?? 0) - (b[key] ?? 0)), 0) / keys.length;
+}
+
+function averageMagnitudeDelta(aBins, bBins) {
+  const count = Math.min(aBins?.length ?? 0, bBins?.length ?? 0);
+  if (!count) {
+    return 0;
+  }
+  let total = 0;
+  for (let i = 0; i < count; i += 1) {
+    total += Math.abs((aBins[i].magnitude ?? 0) - (bBins[i].magnitude ?? 0));
+  }
+  return total / count;
+}
+
+function midpoint3(a, b) {
+  return [
+    (a[0] + b[0]) / 2,
+    (a[1] + b[1]) / 2,
+    (a[2] + b[2]) / 2
+  ];
 }
 
 function directivityAt(speaker, direction) {
